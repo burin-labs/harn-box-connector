@@ -1,0 +1,911 @@
+let BOX_PROVIDER_ID = "box"
+
+let BOX_API_BASE_URL = "https://api.box.com/2.0"
+
+let BOX_UPLOAD_BASE_URL = "https://upload.box.com/api/2.0"
+
+let BOX_ALLOWED_API_HOSTS = ["api.box.com"]
+
+let BOX_ALLOWED_UPLOAD_HOSTS = ["upload.box.com"]
+
+let BOX_OUTBOUND_METHODS = [
+  "files.get",
+  "files.content",
+  "files.representations",
+  "folders.items",
+  "events.get",
+  "files.upload",
+  "webhooks.create",
+  "webhooks.delete",
+  "webhooks.list",
+  "artifact.export_request",
+  "artifact.import_request",
+]
+
+let BOX_MUTATING_METHODS = ["files.upload", "webhooks.create", "webhooks.delete", "artifact.import_request"]
+
+var BOX_STATE = {initialized: false, active: false, ctx: {}, webhook_bindings: {}, poll_bindings: {}}
+
+/** Return this connector's Harn provider id. */
+pub fn provider_id() {
+  return BOX_PROVIDER_ID
+}
+
+/** Return the trigger kinds supported by this connector. */
+pub fn kinds() {
+  return ["webhook", "poll"]
+}
+
+/** Describe outbound methods and which ones mutate provider state. */
+pub fn methods() {
+  var out = []
+  for name in BOX_OUTBOUND_METHODS {
+    out = out + [{name: name, requires_approval: contains(BOX_MUTATING_METHODS, name)}]
+  }
+  return out
+}
+
+/** Alias used by connector tooling and tests that expect method policies. */
+pub fn outbound_methods() {
+  return methods()
+}
+
+/** Return the canonical normalized Box event payload schema. */
+pub fn payload_schema() {
+  return {
+    harn_schema_name: "BoxEventPayload",
+    json_schema: {
+      type: "object",
+      required: ["provider", "event", "raw"],
+      additionalProperties: true,
+      properties: {
+        provider: {type: "string"},
+        event: {type: "string"},
+        event_id: {type: ["string", "null"]},
+        item_id: {type: ["string", "null"]},
+        item_type: {type: ["string", "null"]},
+        file_id: {type: ["string", "null"]},
+        folder_id: {type: ["string", "null"]},
+        removed: {type: ["boolean", "null"]},
+        raw: {type: "object"},
+      },
+    },
+  }
+}
+
+/** Initialize connector state with orchestrator context. */
+pub fn init(ctx = nil) {
+  BOX_STATE = BOX_STATE + {initialized: true, ctx: ctx ?? {}}
+  return BOX_STATE
+}
+
+/** Activate webhook and poll bindings. */
+pub fn activate(bindings = []) {
+  var webhook_bindings = {}
+  var poll_bindings = {}
+  var seen_targets = {}
+  for binding in bindings ?? [] {
+    let binding_id = __text(
+      binding?.binding_id ?? binding?.id
+        ?? ("binding-" + to_string(len(webhook_bindings.keys()) + len(poll_bindings.keys()))),
+    )
+    let kind = __text(binding?.kind ?? "webhook")
+    if kind == "webhook" {
+      let target = __text(binding?.target_id ?? binding?.target?.id ?? binding?.match?.target_id)
+      if target != "" {
+        if seen_targets.get(target) {
+          return __err("activation", "box connector target `" + target + "` is configured by multiple bindings")
+        }
+        seen_targets[target] = true
+      }
+      webhook_bindings[binding_id] = binding + {binding_id: binding_id}
+    } else if kind == "poll" {
+      poll_bindings[binding_id] = binding + {binding_id: binding_id}
+    } else {
+      return __err("activation", "unsupported box binding kind `" + kind + "`")
+    }
+  }
+  BOX_STATE = BOX_STATE + {active: true, webhook_bindings: webhook_bindings, poll_bindings: poll_bindings}
+  return {
+    provider: BOX_PROVIDER_ID,
+    bindings: len(webhook_bindings.keys()) + len(poll_bindings.keys()),
+    webhook_bindings: len(webhook_bindings.keys()),
+    poll_bindings: len(poll_bindings.keys()),
+  }
+}
+
+/** Clear connector lifecycle state. */
+pub fn shutdown() {
+  BOX_STATE = {initialized: false, active: false, ctx: {}, webhook_bindings: {}, poll_bindings: {}}
+  return {active: false, provider: BOX_PROVIDER_ID}
+}
+
+/**
+ * Normalize Box V2 webhook deliveries.
+ *
+ * Box sends a single webhook_event object and signs `body + delivery timestamp`
+ * with one of two configured signature keys.
+ */
+pub fn normalize_inbound(raw) {
+  let body_text = __body_text(raw)
+  let verified = __verify_box_signature(raw, body_text)
+  if is_err(verified) {
+    return __reject(401, unwrap_err(verified).code, unwrap_err(verified).message)
+  }
+  let parsed = __body_json(raw)
+  if is_err(parsed) {
+    return __reject(400, "invalid_json", "box webhook body must be JSON")
+  }
+  let payload = unwrap(parsed)
+  let trigger = __text(payload?.trigger ?? payload?.event_type ?? raw?.trigger)
+  if trigger == "" {
+    return __reject(400, "missing_trigger", "box webhook body must contain trigger")
+  }
+  let source = payload?.source ?? {}
+  let source_id = __text(source?.id)
+  let source_type = __text(source?.type)
+  let event = "box.webhook." + lowercase(trigger)
+  let removed = __is_removed_trigger(trigger)
+  let normalized = {
+    provider: BOX_PROVIDER_ID,
+    event: event,
+    event_type: event,
+    trigger: trigger,
+    webhook_id: payload?.webhook?.id,
+    event_id: payload?.id ?? payload?.event_id,
+    item_id: source_id,
+    item_type: source_type,
+    file_id: if source_type == "file" {
+      source_id
+    } else {
+      nil
+    },
+    folder_id: if source_type == "folder" {
+      source_id
+    } else {
+      nil
+    },
+    name: source?.name,
+    sequence_id: payload?.sequence_id,
+    removed: removed,
+    raw: payload,
+  }
+  return {
+    type: "event",
+    event: {
+      provider: BOX_PROVIDER_ID,
+      kind: event,
+      occurred_at: payload?.created_at ?? payload?.recorded_at,
+      dedupe_key: __event_dedupe_key(event, __text(payload?.id ?? payload?.event_id), source_id),
+      payload: normalized,
+      source: "box.webhook",
+      signature_status: unwrap(verified),
+      source_refs: [__item_ref(source_id, source_type, source)],
+    },
+  }
+}
+
+/** Dispatch one Box outbound method. */
+pub fn call(method, args = nil) {
+  let name = __canonical_method(method)
+  if name == "artifact.export_request" {
+    return artifact_export_request(args ?? {})
+  }
+  if name == "artifact.import_request" {
+    return artifact_import_request(args ?? {})
+  }
+  if contains(BOX_MUTATING_METHODS, name) && !(args?._approved ?? args?.approved ?? false) {
+    return __err("approval_required", "box method `" + name + "` requires approval")
+  }
+  let cfg = __config(args ?? {})
+  if is_err(cfg) {
+    return cfg
+  }
+  let request = __request_for_method(name, args ?? {}, unwrap(cfg))
+  if is_err(request) {
+    return request
+  }
+  return __box_request(unwrap(request))
+}
+
+/** Build the deterministic HTTP descriptor for a Box method. */
+pub fn request_descriptor(method, args = nil) {
+  let cfg = __config(args ?? {})
+  if is_err(cfg) {
+    return cfg
+  }
+  return __request_for_method(__canonical_method(method), args ?? {}, unwrap(cfg))
+}
+
+/** Poll Box events and normalize file/folder changes from Harn-managed state. */
+pub fn poll_tick(ctx) {
+  let cfg = __config((ctx?.binding?.config ?? {}) + (ctx?.binding ?? {}) + (ctx ?? {}))
+  if is_err(cfg) {
+    return cfg
+  }
+  let binding = ctx?.binding ?? {}
+  let poll = binding?.poll ?? binding?.config?.poll ?? {}
+  let stream_position = __text(ctx?.cursor?.stream_position ?? ctx?.cursor?.cursor ?? poll?.stream_position ?? "now")
+  let args = (poll ?? {}) + {stream_position: stream_position}
+  let request = __request_for_method("events.get", args, unwrap(cfg))
+  if is_err(request) {
+    return request
+  }
+  let response = __box_request(unwrap(request))
+  if is_err(response) {
+    return response
+  }
+  let payload = unwrap(response)
+  var events = []
+  let state = ctx?.state ?? {}
+  let cache = state?.poll_cache ?? {}
+  var next_cache = cache
+  for entry in payload?.entries ?? [] {
+    let event_id = __text(entry?.event_id ?? entry?.id)
+    let event_type = __text(entry?.event_type)
+    let source = entry?.source ?? {}
+    let source_id = __text(source?.id)
+    if event_id == "" && source_id == "" {
+      continue
+    }
+    let cache_key = __text(ctx?.binding_id ?? binding?.id ?? "box.events") + ":" + event_id + ":" + source_id
+    let fingerprint = json_stringify({event_id: event_id, event_type: event_type, source: source})
+    if cache.get(cache_key) == fingerprint {
+      continue
+    }
+    next_cache[cache_key] = fingerprint
+    let event_kind = "box.events." + lowercase(event_type)
+    let source_type = __text(source?.type)
+    events = events
+      + [
+      {
+        provider: BOX_PROVIDER_ID,
+        kind: event_kind,
+        occurred_at: entry?.created_at ?? entry?.recorded_at ?? ctx?.tick_at,
+        dedupe_key: __event_dedupe_key(event_kind, event_id, source_id),
+        payload: {
+          provider: BOX_PROVIDER_ID,
+          event: event_kind,
+          event_type: event_kind,
+          box_event_type: event_type,
+          event_id: event_id,
+          item_id: source_id,
+          item_type: source_type,
+          file_id: if source_type == "file" {
+            source_id
+          } else {
+            nil
+          },
+          folder_id: if source_type == "folder" {
+            source_id
+          } else {
+            nil
+          },
+          name: source?.name,
+          removed: __is_removed_trigger(event_type),
+          raw: entry,
+        },
+        source_refs: [__item_ref(source_id, source_type, source)],
+      },
+    ]
+  }
+  let next_position = payload?.next_stream_position ?? stream_position
+  return {
+    events: events,
+    cursor: {stream_position: next_position, cursor: next_position},
+    state: state + {poll_cache: next_cache},
+  }
+}
+
+/** Build a deterministic Box export/download descriptor for an artifact. */
+pub fn artifact_export_request(args = nil) {
+  let file_id = __artifact_file_id(args ?? {})
+  if is_err(file_id) {
+    return file_id
+  }
+  let format = lowercase(__text(args?.format))
+  let name = __text(args?.name ?? "box-artifact")
+  let cfg = {
+    api_base_url: __strip_trailing_slash(__text(args?.api_base_url ?? args?.apiBaseUrl ?? BOX_API_BASE_URL)),
+  }
+  let checked = __validate_api_url(cfg.api_base_url)
+  if is_err(checked) {
+    return checked
+  }
+  if format == "pdf" {
+    return {
+      provider: BOX_PROVIDER_ID,
+      kind: "artifact_export",
+      method: "GET",
+      url: cfg.api_base_url + "/files/" + url_encode(unwrap(file_id)),
+      query: {fields: "representations"},
+      headers: {"X-Rep-Hints": "[pdf]"},
+      artifact: {
+        uri: "box://files/" + unwrap(file_id) + "/representations/pdf",
+        name: if name.ends_with(".pdf") {
+          name
+        } else {
+          name + ".pdf"
+        },
+        mime_type: "application/pdf",
+        source_ref: __item_ref(unwrap(file_id), "file", {}),
+      },
+      scopes: ["root_readwrite", "item_readwrite"],
+    }
+  }
+  return {
+    provider: BOX_PROVIDER_ID,
+    kind: "artifact_export",
+    method: "GET",
+    url: cfg.api_base_url + "/files/" + url_encode(unwrap(file_id)) + "/content",
+    artifact: {
+      uri: "box://files/" + unwrap(file_id) + "/content",
+      name: name,
+      mime_type: __mime_type_from_name(name),
+      source_ref: __item_ref(unwrap(file_id), "file", {}),
+    },
+    scopes: ["root_readwrite", "item_readwrite"],
+  }
+}
+
+/** Build a deterministic Box upload descriptor for a local artifact. */
+pub fn artifact_import_request(args = nil) {
+  let name = __required(args, "name")
+  if is_err(name) {
+    return name
+  }
+  let parent_id = __text(args?.parent_id ?? args?.parentId ?? "0")
+  let mime_type = __text(args?.mime_type ?? args?.mimeType ?? "application/octet-stream")
+  let cfg = {
+    upload_base_url: __strip_trailing_slash(__text(args?.upload_base_url ?? args?.uploadBaseUrl ?? BOX_UPLOAD_BASE_URL)),
+  }
+  let checked = __validate_upload_url(cfg.upload_base_url)
+  if is_err(checked) {
+    return checked
+  }
+  return {
+    provider: BOX_PROVIDER_ID,
+    kind: "artifact_import",
+    method: "POST",
+    url: cfg.upload_base_url + "/files/content",
+    metadata: {name: unwrap(name), parent_id: parent_id},
+    media: {
+      uri: args?.uri ?? args?.path,
+      mime_type: mime_type,
+      size_bytes: args?.size_bytes ?? args?.sizeBytes,
+      sha256: args?.sha256,
+    },
+    scopes: ["root_readwrite", "item_upload"],
+  }
+}
+
+fn __request_for_method(method, args, cfg) {
+  if method == "files.get" {
+    let file_id = __required(args, "file_id")
+    if is_err(file_id) {
+      return file_id
+    }
+    return Ok(
+      __json_request("GET", cfg.api_base_url + "/files/" + url_encode(unwrap(file_id)), nil, cfg, args),
+    )
+  }
+  if method == "files.content" {
+    let file_id = __required(args, "file_id")
+    if is_err(file_id) {
+      return file_id
+    }
+    return Ok(
+      __binary_request(
+        "GET",
+        cfg.api_base_url + "/files/" + url_encode(unwrap(file_id)) + "/content",
+        cfg,
+      ),
+    )
+  }
+  if method == "files.representations" {
+    let file_id = __required(args, "file_id")
+    if is_err(file_id) {
+      return file_id
+    }
+    let representation = __text(args?.representation ?? args?.format ?? "pdf")
+    return Ok(
+      __json_request(
+        "GET",
+        cfg.api_base_url + "/files/" + url_encode(unwrap(file_id)),
+        nil,
+        cfg,
+        args + {fields: "representations", rep_hints: "[" + representation + "]"},
+      ),
+    )
+  }
+  if method == "folders.items" {
+    let folder_id = __text(args?.folder_id ?? args?.folderId ?? "0")
+    return Ok(
+      __json_request(
+        "GET",
+        cfg.api_base_url + "/folders/" + url_encode(folder_id) + "/items",
+        nil,
+        cfg,
+        args,
+      ),
+    )
+  }
+  if method == "events.get" {
+    return Ok(__json_request("GET", cfg.api_base_url + "/events", nil, cfg, args))
+  }
+  if method == "files.upload" {
+    let name = __required(args, "name")
+    if is_err(name) {
+      return name
+    }
+    let parent_id = __text(args?.parent_id ?? args?.parentId ?? "0")
+    let body = args?.body ?? args?.content ?? ""
+    return Ok(
+      __upload_request(
+        cfg.upload_base_url + "/files/content",
+        {name: unwrap(name), parent: {id: parent_id}},
+        body,
+        cfg,
+      ),
+    )
+  }
+  if method == "webhooks.create" {
+    let target_id = __required(args, "target_id")
+    if is_err(target_id) {
+      return target_id
+    }
+    let address = __required(args, "address")
+    if is_err(address) {
+      return address
+    }
+    let target_type = __text(args?.target_type ?? args?.targetType ?? "folder")
+    let triggers = args?.triggers ?? ["FILE.UPLOADED", "FILE.DOWNLOADED", "FILE.DELETED", "FILE.TRASHED"]
+    return Ok(
+      __json_request(
+        "POST",
+        cfg.api_base_url + "/webhooks",
+        {target: {type: target_type, id: unwrap(target_id)}, address: unwrap(address), triggers: triggers},
+        cfg,
+        {},
+      ),
+    )
+  }
+  if method == "webhooks.delete" {
+    let webhook_id = __required(args, "webhook_id")
+    if is_err(webhook_id) {
+      return webhook_id
+    }
+    return Ok(
+      __json_request(
+        "DELETE",
+        cfg.api_base_url + "/webhooks/" + url_encode(unwrap(webhook_id)),
+        nil,
+        cfg,
+        {},
+      ),
+    )
+  }
+  if method == "webhooks.list" {
+    return Ok(__json_request("GET", cfg.api_base_url + "/webhooks", nil, cfg, args))
+  }
+  return __err("method_not_found", "box connector does not implement outbound method `" + method + "`")
+}
+
+fn __json_request(method, url, body, cfg, args) {
+  let query = __box_query(args)
+  return {
+    method: method,
+    url: url + query,
+    headers: __headers(cfg, args),
+    body: if body == nil {
+      nil
+    } else if type_of(body) == "string" {
+      body
+    } else {
+      json_stringify(body)
+    },
+  }
+}
+
+fn __binary_request(method, url, cfg) {
+  return {method: method, url: url, headers: __headers(cfg, {})}
+}
+
+fn __upload_request(url, attributes, body, cfg) {
+  return {
+    method: "POST",
+    url: url,
+    headers: __headers(cfg, {}) + {"Content-Type": "application/octet-stream"},
+    body: body,
+    attributes: attributes,
+  }
+}
+
+fn __box_request(request) {
+  let response = try {
+    harness.net.request(request.method, request.url, {headers: request.headers, body: request.body})
+  }
+  if is_err(response) {
+    return __err("transport", to_string(unwrap_err(response)))
+  }
+  let http_response = unwrap(response)
+  let text = http_response.body ?? ""
+  let content_type = lowercase(__text(__header(http_response.headers ?? {}, "content-type")))
+  if http_response.status >= 200 && http_response.status < 300 && !contains(content_type, "json")
+    && text != "" {
+    return {bytes: text, headers: http_response.headers ?? {}}
+  }
+  let decoded = try {
+    if text == "" {
+      {}
+    } else {
+      json_parse(text)
+    }
+  }
+  if is_err(decoded) {
+    if http_response.status >= 200 && http_response.status < 300 {
+      return {bytes: text, headers: http_response.headers ?? {}}
+    }
+    return __err("invalid_response", "Box API returned invalid JSON")
+  }
+  let payload = unwrap(decoded)
+  if http_response.status < 200 || http_response.status >= 300 {
+    return Err(
+      {
+        status: http_response.status,
+        code: payload?.code ?? payload?.type ?? "box_error",
+        message: payload?.message
+          ?? ("Box API request failed with status " + to_string(http_response.status)),
+        provider: BOX_PROVIDER_ID,
+      },
+    )
+  }
+  return payload
+}
+
+fn __config(args) {
+  let access_token = __text(args?.access_token ?? args?.token ?? BOX_STATE.ctx?.access_token)
+  if access_token == "" {
+    return __err("missing_access_token", "box connector requires access_token")
+  }
+  let api_base_url = __text(args?.api_base_url ?? args?.apiBaseUrl ?? BOX_STATE.ctx?.api_base_url ?? BOX_API_BASE_URL)
+  let upload_base_url = __text(
+    args?.upload_base_url ?? args?.uploadBaseUrl ?? BOX_STATE.ctx?.upload_base_url
+      ?? BOX_UPLOAD_BASE_URL,
+  )
+  let checked_api = __validate_api_url(api_base_url)
+  if is_err(checked_api) {
+    return checked_api
+  }
+  let checked_upload = __validate_upload_url(upload_base_url)
+  if is_err(checked_upload) {
+    return checked_upload
+  }
+  return Ok(
+    {
+      access_token: access_token,
+      api_base_url: __strip_trailing_slash(api_base_url),
+      upload_base_url: __strip_trailing_slash(upload_base_url),
+    },
+  )
+}
+
+fn __headers(cfg, args) {
+  var headers = {Authorization: "Bearer " + cfg.access_token}
+  if args?.rep_hints != nil {
+    headers["X-Rep-Hints"] = __text(args.rep_hints)
+  }
+  if args?.boxapi != nil {
+    headers.BoxApi = __text(args.boxapi)
+  }
+  return headers
+}
+
+fn __box_query(args) {
+  var query = {}
+  for key in (args ?? {}).keys() {
+    if contains(__request_deny_keys(), key) || starts_with(key, "_") {
+      continue
+    }
+    let mapped = __query_key(key)
+    if mapped == "" {
+      continue
+    }
+    query[mapped] = args[key]
+  }
+  if len(query.keys()) == 0 {
+    return ""
+  }
+  var parts = []
+  for entry in query.entries() {
+    if entry.value == nil {
+      continue
+    }
+    parts = parts + [url_encode(__text(entry.key)) + "=" + url_encode(__text(entry.value))]
+  }
+  if len(parts) == 0 {
+    return ""
+  }
+  return "?" + parts.join("&")
+}
+
+fn __query_key(key) {
+  let text = __text(key)
+  if text == "file_id" || text == "folder_id" || text == "parent_id" || text == "target_id"
+    || text == "webhook_id"
+    || text == "target_type"
+    || text == "address"
+    || text == "triggers"
+    || text == "name"
+    || text == "body"
+    || text == "content"
+    || text == "representation"
+    || text == "format"
+    || text == "rep_hints"
+    || text == "boxapi" {
+    return ""
+  }
+  if text == "stream_position" {
+    return "stream_position"
+  }
+  if text == "stream_type" {
+    return "stream_type"
+  }
+  if text == "next_marker" {
+    return "marker"
+  }
+  return text
+}
+
+fn __verify_box_signature(raw, body_text) {
+  let primary = __text(
+    raw?.primary_key ?? raw?.primaryKey ?? raw?.metadata?.primary_key ?? BOX_STATE.ctx?.primary_key,
+  )
+  let secondary = __text(
+    raw?.secondary_key ?? raw?.secondaryKey ?? raw?.metadata?.secondary_key
+      ?? BOX_STATE.ctx?.secondary_key,
+  )
+  if primary == "" && secondary == "" {
+    return Ok({state: "unsigned", scheme: "box-v2"})
+  }
+  let timestamp = __text(__header(raw?.headers ?? {}, "box-delivery-timestamp"))
+  if timestamp == "" {
+    return __err("missing_timestamp", "missing BOX-DELIVERY-TIMESTAMP header")
+  }
+  let primary_signature = __text(__header(raw?.headers ?? {}, "box-signature-primary"))
+  let secondary_signature = __text(__header(raw?.headers ?? {}, "box-signature-secondary"))
+  if primary_signature == "" && secondary_signature == "" {
+    return __err("missing_signature", "missing BOX-SIGNATURE-PRIMARY or BOX-SIGNATURE-SECONDARY header")
+  }
+  let signed_payload = body_text + timestamp
+  if primary != "" && primary_signature != "" {
+    let expected_primary = hmac_sha256_base64(primary, signed_payload)
+    if constant_time_eq(expected_primary, primary_signature) {
+      return Ok({state: "verified", scheme: "box-v2", key: "primary"})
+    }
+  }
+  if secondary != "" && secondary_signature != "" {
+    let expected_secondary = hmac_sha256_base64(secondary, signed_payload)
+    if constant_time_eq(expected_secondary, secondary_signature) {
+      return Ok({state: "verified", scheme: "box-v2", key: "secondary"})
+    }
+  }
+  return __err("invalid_signature", "Box webhook signature did not match body plus delivery timestamp")
+}
+
+fn __body_text(raw) {
+  if type_of(raw?.body_text) == "string" {
+    return raw.body_text
+  }
+  if type_of(raw?.body) == "string" {
+    return raw.body
+  }
+  return json_stringify(raw?.body_json ?? raw?.body ?? raw ?? {})
+}
+
+fn __body_json(raw) {
+  if raw?.body_json != nil {
+    return Ok(raw.body_json)
+  }
+  if type_of(raw?.body) == "string" {
+    return try {
+      json_parse(raw.body)
+    }
+  }
+  if type_of(raw?.body_text) == "string" {
+    return try {
+      json_parse(raw.body_text)
+    }
+  }
+  return Ok(raw?.body ?? raw ?? {})
+}
+
+fn __request_deny_keys() {
+  return [
+    "access_token",
+    "token",
+    "api_base_url",
+    "apiBaseUrl",
+    "upload_base_url",
+    "uploadBaseUrl",
+    "_approved",
+    "approved",
+    "body",
+    "content",
+  ]
+}
+
+fn __canonical_method(method) {
+  let text = __text(method)
+  if text == "export_artifact" {
+    return "artifact.export_request"
+  }
+  if text == "import_artifact" {
+    return "artifact.import_request"
+  }
+  if text == "files.get_metadata" {
+    return "files.get"
+  }
+  if text == "files.download" {
+    return "files.content"
+  }
+  if text == "files.export" {
+    return "files.representations"
+  }
+  if text == "files.list_folder" {
+    return "folders.items"
+  }
+  if text == "files.list_folder.continue" {
+    return "folders.items"
+  }
+  return text
+}
+
+fn __required(args, snake_key) {
+  let camel = __snake_to_camel(snake_key)
+  let value = __text(args?[snake_key] ?? args?[camel])
+  if value == "" {
+    return __err("missing_" + snake_key, "box method requires `" + snake_key + "`")
+  }
+  return Ok(value)
+}
+
+fn __snake_to_camel(value) {
+  if value == "api_base_url" {
+    return "apiBaseUrl"
+  }
+  if value == "upload_base_url" {
+    return "uploadBaseUrl"
+  }
+  if value == "file_id" {
+    return "fileId"
+  }
+  if value == "folder_id" {
+    return "folderId"
+  }
+  if value == "target_id" {
+    return "targetId"
+  }
+  if value == "webhook_id" {
+    return "webhookId"
+  }
+  return value
+}
+
+fn __validate_api_url(url) {
+  let text = __text(url)
+  if !starts_with(lowercase(text), "https://") {
+    return __err("invalid_api_base_url", "box api base url must be an absolute https URL")
+  }
+  let parsed = url_parse(text)
+  let host = lowercase(__text(parsed?.host))
+  if !contains(BOX_ALLOWED_API_HOSTS, host) {
+    return __err("disallowed_api_base_url", "box api host `" + host + "` is not in the allowlist")
+  }
+  return Ok(text)
+}
+
+fn __validate_upload_url(url) {
+  let text = __text(url)
+  if !starts_with(lowercase(text), "https://") {
+    return __err("invalid_upload_base_url", "box upload base url must be an absolute https URL")
+  }
+  let parsed = url_parse(text)
+  let host = lowercase(__text(parsed?.host))
+  if !contains(BOX_ALLOWED_UPLOAD_HOSTS, host) {
+    return __err("disallowed_upload_base_url", "box upload host `" + host + "` is not in the allowlist")
+  }
+  return Ok(text)
+}
+
+fn __artifact_file_id(args) {
+  let file_id = __text(args?.file_id ?? args?.fileId ?? args?.id)
+  if file_id == "" {
+    return __err("missing_file_id", "box artifact request requires `file_id`")
+  }
+  return Ok(file_id)
+}
+
+fn __is_removed_trigger(trigger) {
+  let upper = uppercase(__text(trigger))
+  return upper.contains("DELETED") || upper.contains("TRASHED")
+}
+
+fn __mime_type_from_name(name) {
+  let lower = lowercase(__text(name))
+  if lower.ends_with(".pdf") {
+    return "application/pdf"
+  }
+  if lower.ends_with(".docx") {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  }
+  if lower.ends_with(".pptx") {
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  }
+  if lower.ends_with(".xlsx") {
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  }
+  if lower.ends_with(".txt") {
+    return "text/plain"
+  }
+  if lower.ends_with(".md") {
+    return "text/markdown"
+  }
+  return "application/octet-stream"
+}
+
+fn __strip_trailing_slash(value) {
+  let text = __text(value)
+  if text.ends_with("/") {
+    return text[0:len(text) - 1]
+  }
+  return text
+}
+
+fn __header(headers, name) {
+  let wanted = lowercase(name)
+  for entry in (headers ?? {}).entries() {
+    if lowercase(trim(to_string(entry.key))) == wanted {
+      return entry.value
+    }
+  }
+  return nil
+}
+
+fn __item_ref(item_id, item_type, item) {
+  let kind = if __text(item_type) == "" {
+    "box_item"
+  } else {
+    "box_" + __text(item_type)
+  }
+  return {
+    provider: BOX_PROVIDER_ID,
+    kind: kind,
+    id: item_id,
+    ref: "box://" + kind + "s/" + __text(item_id),
+    name: item?.name,
+    sequence_id: item?.sequence_id,
+    etag: item?.etag,
+    sha1: item?.sha1,
+    mime_type: item?.mime_type ?? __mime_type_from_name(item?.name),
+  }
+}
+
+fn __event_dedupe_key(event, event_id, source_id) {
+  return BOX_PROVIDER_ID + ":" + __text(event) + ":" + __text(event_id) + ":" + __text(source_id)
+}
+
+fn __text(value) {
+  if value == nil {
+    return ""
+  }
+  return trim(to_string(value))
+}
+
+fn __err(code, message) {
+  return Err({code: code, message: message, provider: BOX_PROVIDER_ID})
+}
+
+fn __reject(status, code, message) {
+  return {type: "reject", reject: {status: status, code: code, message: message}}
+}

@@ -1,0 +1,38 @@
+import { init, normalize_inbound, shutdown } from "../src/lib"
+import { expect, expect_eq } from "./assertions"
+import { assert_box_interface, box_signature_headers, box_webhook_body } from "./helpers"
+
+pipeline default() {
+  let secret = "primary-secret"
+  assert_box_interface()
+  let body = box_webhook_body()
+  let event = normalize_inbound(
+    {primary_key: secret, body_text: body, headers: box_signature_headers(secret, body)},
+  )
+  expect_eq(event.type, "event", "Box webhook envelope type")
+  expect_eq(event.event.kind, "box.webhook.file.uploaded", "Box event kind")
+  expect_eq(event.event.signature_status.state, "verified", "signature verified")
+  expect_eq(event.event.signature_status.key, "primary", "primary key verified")
+  expect_eq(event.event.payload.provider, "box", "payload provider")
+  expect_eq(event.event.payload.file_id, "file_123", "file id")
+  expect_eq(event.event.payload.item_type, "file", "item type")
+  expect_eq(event.event.payload.removed, false, "uploaded is not removed")
+  expect(event.event.dedupe_key.contains("evt_webhook_123"), "dedupe key includes event id")
+  expect_eq(event.event.source_refs[0].kind, "box_file", "source ref kind")
+  shutdown()
+  let unsigned = normalize_inbound({body: box_webhook_body("FILE.DELETED")})
+  expect_eq(unsigned.type, "event", "unsigned webhook can be accepted when no keys configured")
+  expect_eq(unsigned.event.signature_status.state, "unsigned", "unsigned state")
+  expect_eq(unsigned.event.payload.removed, true, "deleted is removed")
+  init({primary_key: secret})
+  let bad_signature = normalize_inbound({body_text: body, headers: box_signature_headers("wrong-secret", body)})
+  expect_eq(bad_signature.type, "reject", "wrong signature rejects")
+  expect_eq(bad_signature.reject.status, 401, "wrong signature status")
+  let missing_timestamp = normalize_inbound({body_text: body, headers: {"box-signature-primary": "abc"}})
+  expect_eq(missing_timestamp.type, "reject", "missing timestamp rejects")
+  expect_eq(missing_timestamp.reject.code, "missing_timestamp", "missing timestamp code")
+  let missing = normalize_inbound({body_text: "{}", headers: box_signature_headers(secret, "{}")})
+  expect_eq(missing.type, "reject", "missing trigger rejects")
+  expect_eq(missing.reject.status, 400, "missing trigger status")
+  shutdown()
+}

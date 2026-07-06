@@ -1,0 +1,42 @@
+import { activate, init, kinds, payload_schema, provider_id, shutdown } from "../src/lib"
+
+/** Assert the exported connector lifecycle/interface surface. */
+pub fn assert_box_interface() {
+  shutdown()
+  require provider_id() == "box", "provider id"
+  require kinds() == ["webhook", "poll"], "supported kinds"
+  require payload_schema().harn_schema_name == "BoxEventPayload", "payload schema name"
+  let initialized = init({primary_key: "primary-secret", access_token: "secret_access"})
+  require initialized.initialized, "init stores state"
+  let activated = activate(
+    [
+      {id: "box.webhook", kind: "webhook", target_id: "12345", secrets: {primary_key: "primary-secret"}},
+      {id: "box.events", kind: "poll", poll: {stream_type: "changes"}, access_token: "secret_access"},
+    ],
+  )
+  require activated.bindings == 2, "activate counts bindings"
+  require activated.webhook_bindings == 1, "activate counts webhook bindings"
+  require activated.poll_bindings == 1, "activate counts poll bindings"
+}
+
+/** Build a Box V2 webhook body. */
+pub fn box_webhook_body(trigger = "FILE.UPLOADED", source = nil) {
+  return json_stringify(
+    {
+      type: "webhook_event",
+      id: "evt_webhook_123",
+      trigger: trigger,
+      created_at: "2026-07-06T12:00:00-07:00",
+      webhook: {id: "wh_123", type: "webhook"},
+      source: source ?? {id: "file_123", type: "file", name: "Report.docx", sha1: "abc123"},
+    },
+  )
+}
+
+/** Build Box V2 webhook signature headers for a body and timestamp. */
+pub fn box_signature_headers(secret, body, timestamp = "2026-07-06T12:00:00-07:00") {
+  return {
+    "box-delivery-timestamp": timestamp,
+    "box-signature-primary": hmac_sha256_base64(secret, body + timestamp),
+  }
+}

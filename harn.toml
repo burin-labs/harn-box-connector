@@ -1,0 +1,65 @@
+[package]
+name = "harn-box-connector"
+version = "0.1.0"
+description = "Pure-Harn Box connector for file artifacts, webhooks, polling, and outbound API dispatch."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/burin-labs/harn-box-connector"
+harn = ">=0.9,<0.10"
+docs_url = "README.md"
+provenance = "https://github.com/burin-labs/harn-box-connector/releases/tag/v0.1.0"
+
+[exports]
+default = "src/lib.harn"
+
+[[providers]]
+id = "box"
+connector = { harn = "src/lib.harn" }
+capabilities = ["webhook", "oauth", "pagination"]
+
+[providers.oauth]
+authorization_endpoint = "https://www.box.com/oauth2/authorize"
+token_endpoint = "https://api.box.com/oauth2/token"
+scopes = "root_readwrite item_readwrite item_upload manage_webhook"
+token_endpoint_auth_method = "client_secret_post"
+
+[providers.setup]
+auth_type = "oauth2"
+flow = "browser"
+required_scopes = ["root_readwrite", "item_readwrite", "item_upload", "manage_webhook"]
+required_secrets = ["box/access-token", "box/webhook-primary-key"]
+setup_command = ["harn", "connect", "box"]
+validation_command = ["harn", "connect", "status", "--connector", "box", "--json"]
+
+[[providers.setup.health_checks]]
+id = "access-token"
+kind = "secret"
+secret = "box/access-token"
+
+[[providers.setup.health_checks]]
+id = "webhook-primary-key"
+kind = "secret"
+secret = "box/webhook-primary-key"
+
+[providers.setup.recovery]
+missing_auth = "Store box/access-token before enabling Box bindings."
+expired_credentials = "Refresh the OAuth access token and rerun Box validation."
+revoked_credentials = "Reauthorize Box and replace box/access-token."
+missing_scopes = "Grant Box file metadata/content scopes required by the configured artifact workflow."
+inaccessible_resource = "Confirm the selected Box file, folder, or webhook target is visible to the authorized account."
+transient_provider_outage = "Retry after Box API and webhook delivery are healthy."
+
+[dependencies]
+
+[connector_contract]
+version = 1
+
+[[connector_contract.fixtures]]
+provider = "box"
+name = "signed file upload webhook"
+kind = "webhook"
+metadata = { primary_key = "fixture-primary", binding_id = "box.webhook" }
+body = "{\"type\":\"webhook_event\",\"id\":\"evt_fixture_123\",\"trigger\":\"FILE.UPLOADED\",\"created_at\":\"2026-07-06T12:00:00-07:00\",\"webhook\":{\"id\":\"wh_fixture\",\"type\":\"webhook\"},\"source\":{\"id\":\"file_fixture\",\"type\":\"file\",\"name\":\"Fixture.pdf\"}}"
+headers = { "box-delivery-timestamp" = "2026-07-06T12:00:00-07:00", "box-signature-primary" = "U+AfF5oxhEdPoixHs9eXJqL5AgAoJd5LuBwNRUFY8nM=" }
+expect_type = "event"
+expect_kind = "box.webhook.file.uploaded"
+expect_event_count = 1

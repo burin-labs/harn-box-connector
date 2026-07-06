@@ -1,0 +1,152 @@
+import {
+  artifact_export_request,
+  artifact_import_request,
+  call,
+  init,
+  request_descriptor,
+  shutdown,
+} from "../src/lib"
+import { expect, expect_eq } from "./assertions"
+
+pipeline default() {
+  egress_policy({allow: ["api.box.com", "upload.box.com"], default: "deny"})
+  shutdown()
+  init({access_token: "secret_access"})
+  http_mock_clear()
+  let api = "https://api.box.com/2.0"
+  let upload = "https://upload.box.com/api/2.0"
+  http_mock(
+    "*",
+    "https://api.box.com/*",
+    {
+      responses: [
+        {
+          status: 200,
+          body: "{\"type\":\"file\",\"id\":\"file_123\",\"name\":\"Report.docx\",\"sha1\":\"abc123\"}",
+          headers: {"content-type": "application/json"},
+        },
+        {
+          status: 200,
+          body: "{\"entries\":[{\"type\":\"file\",\"id\":\"file_123\",\"name\":\"Report.docx\"}],\"next_marker\":\"marker_1\",\"limit\":100}",
+          headers: {"content-type": "application/json"},
+        },
+        {status: 200, body: "DOCX-BYTES", headers: {"content-type": "application/octet-stream"}},
+        {
+          status: 200,
+          body: "{\"type\":\"file\",\"id\":\"file_123\",\"representations\":{\"entries\":[{\"representation\":\"pdf\",\"status\":{\"state\":\"success\"}}]}}",
+          headers: {"content-type": "application/json"},
+        },
+        {
+          status: 200,
+          body: "{\"entries\":[],\"next_stream_position\":\"1152922976252290886\",\"chunk_size\":0}",
+          headers: {"content-type": "application/json"},
+        },
+        {
+          status: 201,
+          body: "{\"type\":\"webhook\",\"id\":\"wh_123\"}",
+          headers: {"content-type": "application/json"},
+        },
+      ],
+    },
+  )
+  http_mock(
+    "*",
+    "https://upload.box.com/*",
+    {
+      responses: [
+        {
+          status: 201,
+          body: "{\"entries\":[{\"type\":\"file\",\"id\":\"file_upload\",\"name\":\"Report.docx\"}]}",
+          headers: {"content-type": "application/json"},
+        },
+      ],
+    },
+  )
+  let file = call("files.get", {file_id: "file_123", fields: "id,name,sha1"})
+  expect_eq(file.id, "file_123", "file response")
+  call("folders.items", {folder_id: "0", limit: 10, fields: "id,type,name"})
+  let downloaded = call("files.content", {file_id: "file_123"})
+  expect_eq(downloaded.bytes, "DOCX-BYTES", "download bytes response")
+  let represented = call("files.representations", {file_id: "file_123", representation: "pdf"})
+  expect_eq(represented.id, "file_123", "representation response")
+  call("events.get", {stream_position: "now", stream_type: "changes", limit: 100})
+  let webhook_rejected = call(
+    "webhooks.create",
+    {
+      target_id: "0",
+      target_type: "folder",
+      address: "https://example.com/box",
+      triggers: ["FILE.UPLOADED"],
+    },
+  )
+  expect(is_err(webhook_rejected), "mutating Box webhook create requires approval")
+  expect_eq(unwrap_err(webhook_rejected).code, "approval_required", "approval code")
+  call(
+    "webhooks.create",
+    {
+      target_id: "0",
+      target_type: "folder",
+      address: "https://example.com/box",
+      triggers: ["FILE.UPLOADED"],
+      _approved: true,
+    },
+  )
+  let upload_rejected = call("files.upload", {name: "Report.docx", parent_id: "0", content: "doc bytes"})
+  expect(is_err(upload_rejected), "mutating Box upload requires approval")
+  call("files.upload", {name: "Report.docx", parent_id: "0", content: "doc bytes", _approved: true})
+  let calls = http_mock_calls({include_sensitive: true})
+  expect_eq(len(calls), 7, "all expected outbound methods dispatched")
+  expect_eq(calls[0].method, "GET", "file get uses GET")
+  expect_eq(calls[0].url, api + "/files/file_123?fields=id%2Cname%2Csha1", "file URL")
+  expect_eq(calls[0].headers.authorization, "Bearer secret_access", "authorization header sent")
+  expect(calls[1].url.starts_with(api + "/folders/0/items?"), "folder items URL prefix")
+  expect(calls[1].url.contains("limit=10"), "folder items limit query")
+  expect(calls[1].url.contains("fields=id%2Ctype%2Cname"), "folder items fields query")
+  expect_eq(calls[2].url, api + "/files/file_123/content", "content URL")
+  expect_eq(calls[3].url, api + "/files/file_123?fields=representations", "representations URL")
+  expect_eq(
+    calls[3].headers.get("x-rep-hints") ?? calls[3].headers.get("X-Rep-Hints"),
+    "[pdf]",
+    "representation hint header",
+  )
+  expect(calls[4].url.starts_with(api + "/events?"), "events URL prefix")
+  expect(calls[4].url.contains("stream_position=now"), "events stream position query")
+  expect(calls[4].url.contains("stream_type=changes"), "events stream type query")
+  expect(calls[4].url.contains("limit=100"), "events limit query")
+  expect_eq(calls[5].method, "POST", "webhook create method")
+  expect_eq(calls[5].url, api + "/webhooks", "webhook URL")
+  expect(calls[5].body.contains("\"FILE.UPLOADED\""), "webhook triggers body")
+  expect_eq(calls[6].method, "POST", "upload method")
+  expect_eq(calls[6].url, upload + "/files/content", "upload URL")
+  expect_eq(calls[6].body, "doc bytes", "upload body is preserved")
+  let export = artifact_export_request({file_id: "file_123", format: "pdf", name: "report"})
+  expect_eq(export.kind, "artifact_export", "export descriptor kind")
+  expect_eq(export.method, "GET", "export descriptor method")
+  expect_eq(export.url, api + "/files/file_123", "pdf representation descriptor URL")
+  expect_eq(export.query.fields, "representations", "pdf representation query")
+  expect_eq(export.headers["X-Rep-Hints"], "[pdf]", "pdf representation hint")
+  expect_eq(export.artifact.mime_type, "application/pdf", "export artifact mime")
+  let import_request = artifact_import_request(
+    {
+      parent_id: "0",
+      name: "report.docx",
+      uri: "artifact://session/report.docx",
+      mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    },
+  )
+  expect_eq(import_request.kind, "artifact_import", "import descriptor kind")
+  expect_eq(import_request.method, "POST", "import method")
+  expect_eq(import_request.url, upload + "/files/content", "import URL")
+  expect_eq(import_request.media.uri, "artifact://session/report.docx", "import media uri")
+  let descriptor = request_descriptor("files.content", {access_token: "secret_access", file_id: "file_123"})
+  expect(!is_err(descriptor), "content request descriptor builds")
+  expect_eq(unwrap(descriptor).url, api + "/files/file_123/content", "content request URL")
+  let bad_host = call(
+    "files.get",
+    {file_id: "file_123", access_token: "secret_access", api_base_url: "https://evil.example/2.0"},
+  )
+  expect(is_err(bad_host), "disallowed api_base_url rejected")
+  expect_eq(unwrap_err(bad_host).code, "disallowed_api_base_url", "disallowed host code")
+  http_mock_clear()
+  shutdown()
+}
