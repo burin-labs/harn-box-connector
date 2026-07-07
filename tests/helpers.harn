@@ -6,9 +6,9 @@ pub fn assert_box_interface() {
   require provider_id() == "box", "provider id"
   require kinds() == ["webhook", "poll"], "supported kinds"
   require payload_schema().harn_schema_name == "BoxEventPayload", "payload schema name"
-  let initialized = init({primary_key: "primary-secret", access_token: "secret_access"})
+  const initialized = init({primary_key: "primary-secret", access_token: "secret_access"})
   require initialized.initialized, "init stores state"
-  let activated = activate(
+  const activated = activate(
     [
       {id: "box.webhook", kind: "webhook", target_id: "12345", secrets: {primary_key: "primary-secret"}},
       {id: "box.events", kind: "poll", poll: {stream_type: "changes"}, access_token: "secret_access"},

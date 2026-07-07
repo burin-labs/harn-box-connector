@@ -1,14 +1,14 @@
-let BOX_PROVIDER_ID = "box"
+const BOX_PROVIDER_ID = "box"
 
-let BOX_API_BASE_URL = "https://api.box.com/2.0"
+const BOX_API_BASE_URL = "https://api.box.com/2.0"
 
-let BOX_UPLOAD_BASE_URL = "https://upload.box.com/api/2.0"
+const BOX_UPLOAD_BASE_URL = "https://upload.box.com/api/2.0"
 
-let BOX_ALLOWED_API_HOSTS = ["api.box.com"]
+const BOX_ALLOWED_API_HOSTS = ["api.box.com"]
 
-let BOX_ALLOWED_UPLOAD_HOSTS = ["upload.box.com"]
+const BOX_ALLOWED_UPLOAD_HOSTS = ["upload.box.com"]
 
-let BOX_OUTBOUND_METHODS = [
+const BOX_OUTBOUND_METHODS = [
   "files.get",
   "files.content",
   "files.representations",
@@ -22,9 +22,9 @@ let BOX_OUTBOUND_METHODS = [
   "artifact.import_request",
 ]
 
-let BOX_MUTATING_METHODS = ["files.upload", "webhooks.create", "webhooks.delete", "artifact.import_request"]
+const BOX_MUTATING_METHODS = ["files.upload", "webhooks.create", "webhooks.delete", "artifact.import_request"]
 
-var BOX_STATE = {initialized: false, active: false, ctx: {}, webhook_bindings: {}, poll_bindings: {}}
+let BOX_STATE = {initialized: false, active: false, ctx: {}, webhook_bindings: {}, poll_bindings: {}}
 
 /** Return this connector's Harn provider id. */
 pub fn provider_id() {
@@ -38,7 +38,7 @@ pub fn kinds() {
 
 /** Describe outbound methods and which ones mutate provider state. */
 pub fn methods() {
-  var out = []
+  let out = []
   for name in BOX_OUTBOUND_METHODS {
     out = out + [{name: name, requires_approval: contains(BOX_MUTATING_METHODS, name)}]
   }
@@ -81,17 +81,17 @@ pub fn init(ctx = nil) {
 
 /** Activate webhook and poll bindings. */
 pub fn activate(bindings = []) {
-  var webhook_bindings = {}
-  var poll_bindings = {}
-  var seen_targets = {}
+  let webhook_bindings = {}
+  let poll_bindings = {}
+  let seen_targets = {}
   for binding in bindings ?? [] {
-    let binding_id = __text(
+    const binding_id = __text(
       binding?.binding_id ?? binding?.id
         ?? ("binding-" + to_string(len(webhook_bindings.keys()) + len(poll_bindings.keys()))),
     )
-    let kind = __text(binding?.kind ?? "webhook")
+    const kind = __text(binding?.kind ?? "webhook")
     if kind == "webhook" {
-      let target = __text(binding?.target_id ?? binding?.target?.id ?? binding?.match?.target_id)
+      const target = __text(binding?.target_id ?? binding?.target?.id ?? binding?.match?.target_id)
       if target != "" {
         if seen_targets.get(target) {
           return __err("activation", "box connector target `" + target + "` is configured by multiple bindings")
@@ -127,26 +127,26 @@ pub fn shutdown() {
  * with one of two configured signature keys.
  */
 pub fn normalize_inbound(raw) {
-  let body_text = __body_text(raw)
-  let verified = __verify_box_signature(raw, body_text)
+  const body_text = __body_text(raw)
+  const verified = __verify_box_signature(raw, body_text)
   if is_err(verified) {
     return __reject(401, unwrap_err(verified).code, unwrap_err(verified).message)
   }
-  let parsed = __body_json(raw)
+  const parsed = __body_json(raw)
   if is_err(parsed) {
     return __reject(400, "invalid_json", "box webhook body must be JSON")
   }
-  let payload = unwrap(parsed)
-  let trigger = __text(payload?.trigger ?? payload?.event_type ?? raw?.trigger)
+  const payload = unwrap(parsed)
+  const trigger = __text(payload?.trigger ?? payload?.event_type ?? raw?.trigger)
   if trigger == "" {
     return __reject(400, "missing_trigger", "box webhook body must contain trigger")
   }
-  let source = payload?.source ?? {}
-  let source_id = __text(source?.id)
-  let source_type = __text(source?.type)
-  let event = "box.webhook." + lowercase(trigger)
-  let removed = __is_removed_trigger(trigger)
-  let normalized = {
+  const source = payload?.source ?? {}
+  const source_id = __text(source?.id)
+  const source_type = __text(source?.type)
+  const event = "box.webhook." + lowercase(trigger)
+  const removed = __is_removed_trigger(trigger)
+  const normalized = {
     provider: BOX_PROVIDER_ID,
     event: event,
     event_type: event,
@@ -187,7 +187,7 @@ pub fn normalize_inbound(raw) {
 
 /** Dispatch one Box outbound method. */
 pub fn call(method, args = nil) {
-  let name = __canonical_method(method)
+  const name = __canonical_method(method)
   if name == "artifact.export_request" {
     return artifact_export_request(args ?? {})
   }
@@ -197,11 +197,11 @@ pub fn call(method, args = nil) {
   if contains(BOX_MUTATING_METHODS, name) && !(args?._approved ?? args?.approved ?? false) {
     return __err("approval_required", "box method `" + name + "` requires approval")
   }
-  let cfg = __config(args ?? {})
+  const cfg = __config(args ?? {})
   if is_err(cfg) {
     return cfg
   }
-  let request = __request_for_method(name, args ?? {}, unwrap(cfg))
+  const request = __request_for_method(name, args ?? {}, unwrap(cfg))
   if is_err(request) {
     return request
   }
@@ -210,7 +210,7 @@ pub fn call(method, args = nil) {
 
 /** Build the deterministic HTTP descriptor for a Box method. */
 pub fn request_descriptor(method, args = nil) {
-  let cfg = __config(args ?? {})
+  const cfg = __config(args ?? {})
   if is_err(cfg) {
     return cfg
   }
@@ -219,43 +219,43 @@ pub fn request_descriptor(method, args = nil) {
 
 /** Poll Box events and normalize file/folder changes from Harn-managed state. */
 pub fn poll_tick(ctx) {
-  let cfg = __config((ctx?.binding?.config ?? {}) + (ctx?.binding ?? {}) + (ctx ?? {}))
+  const cfg = __config((ctx?.binding?.config ?? {}) + (ctx?.binding ?? {}) + (ctx ?? {}))
   if is_err(cfg) {
     return cfg
   }
-  let binding = ctx?.binding ?? {}
-  let poll = binding?.poll ?? binding?.config?.poll ?? {}
-  let stream_position = __text(ctx?.cursor?.stream_position ?? ctx?.cursor?.cursor ?? poll?.stream_position ?? "now")
-  let args = (poll ?? {}) + {stream_position: stream_position}
-  let request = __request_for_method("events.get", args, unwrap(cfg))
+  const binding = ctx?.binding ?? {}
+  const poll = binding?.poll ?? binding?.config?.poll ?? {}
+  const stream_position = __text(ctx?.cursor?.stream_position ?? ctx?.cursor?.cursor ?? poll?.stream_position ?? "now")
+  const args = (poll ?? {}) + {stream_position: stream_position}
+  const request = __request_for_method("events.get", args, unwrap(cfg))
   if is_err(request) {
     return request
   }
-  let response = __box_request(unwrap(request))
+  const response = __box_request(unwrap(request))
   if is_err(response) {
     return response
   }
-  let payload = unwrap(response)
-  var events = []
-  let state = ctx?.state ?? {}
-  let cache = state?.poll_cache ?? {}
-  var next_cache = cache
+  const payload = unwrap(response)
+  let events = []
+  const state = ctx?.state ?? {}
+  const cache = state?.poll_cache ?? {}
+  let next_cache = cache
   for entry in payload?.entries ?? [] {
-    let event_id = __text(entry?.event_id ?? entry?.id)
-    let event_type = __text(entry?.event_type)
-    let source = entry?.source ?? {}
-    let source_id = __text(source?.id)
+    const event_id = __text(entry?.event_id ?? entry?.id)
+    const event_type = __text(entry?.event_type)
+    const source = entry?.source ?? {}
+    const source_id = __text(source?.id)
     if event_id == "" && source_id == "" {
       continue
     }
-    let cache_key = __text(ctx?.binding_id ?? binding?.id ?? "box.events") + ":" + event_id + ":" + source_id
-    let fingerprint = json_stringify({event_id: event_id, event_type: event_type, source: source})
+    const cache_key = __text(ctx?.binding_id ?? binding?.id ?? "box.events") + ":" + event_id + ":" + source_id
+    const fingerprint = json_stringify({event_id: event_id, event_type: event_type, source: source})
     if cache.get(cache_key) == fingerprint {
       continue
     }
     next_cache[cache_key] = fingerprint
-    let event_kind = "box.events." + lowercase(event_type)
-    let source_type = __text(source?.type)
+    const event_kind = "box.events." + lowercase(event_type)
+    const source_type = __text(source?.type)
     events = events
       + [
       {
@@ -289,7 +289,7 @@ pub fn poll_tick(ctx) {
       },
     ]
   }
-  let next_position = payload?.next_stream_position ?? stream_position
+  const next_position = payload?.next_stream_position ?? stream_position
   return {
     events: events,
     cursor: {stream_position: next_position, cursor: next_position},
@@ -299,16 +299,16 @@ pub fn poll_tick(ctx) {
 
 /** Build a deterministic Box export/download descriptor for an artifact. */
 pub fn artifact_export_request(args = nil) {
-  let file_id = __artifact_file_id(args ?? {})
+  const file_id = __artifact_file_id(args ?? {})
   if is_err(file_id) {
     return file_id
   }
-  let format = lowercase(__text(args?.format))
-  let name = __text(args?.name ?? "box-artifact")
-  let cfg = {
+  const format = lowercase(__text(args?.format))
+  const name = __text(args?.name ?? "box-artifact")
+  const cfg = {
     api_base_url: __strip_trailing_slash(__text(args?.api_base_url ?? args?.apiBaseUrl ?? BOX_API_BASE_URL)),
   }
-  let checked = __validate_api_url(cfg.api_base_url)
+  const checked = __validate_api_url(cfg.api_base_url)
   if is_err(checked) {
     return checked
   }
@@ -350,16 +350,16 @@ pub fn artifact_export_request(args = nil) {
 
 /** Build a deterministic Box upload descriptor for a local artifact. */
 pub fn artifact_import_request(args = nil) {
-  let name = __required(args, "name")
+  const name = __required(args, "name")
   if is_err(name) {
     return name
   }
-  let parent_id = __text(args?.parent_id ?? args?.parentId ?? "0")
-  let mime_type = __text(args?.mime_type ?? args?.mimeType ?? "application/octet-stream")
-  let cfg = {
+  const parent_id = __text(args?.parent_id ?? args?.parentId ?? "0")
+  const mime_type = __text(args?.mime_type ?? args?.mimeType ?? "application/octet-stream")
+  const cfg = {
     upload_base_url: __strip_trailing_slash(__text(args?.upload_base_url ?? args?.uploadBaseUrl ?? BOX_UPLOAD_BASE_URL)),
   }
-  let checked = __validate_upload_url(cfg.upload_base_url)
+  const checked = __validate_upload_url(cfg.upload_base_url)
   if is_err(checked) {
     return checked
   }
@@ -381,7 +381,7 @@ pub fn artifact_import_request(args = nil) {
 
 fn __request_for_method(method, args, cfg) {
   if method == "files.get" {
-    let file_id = __required(args, "file_id")
+    const file_id = __required(args, "file_id")
     if is_err(file_id) {
       return file_id
     }
@@ -390,7 +390,7 @@ fn __request_for_method(method, args, cfg) {
     )
   }
   if method == "files.content" {
-    let file_id = __required(args, "file_id")
+    const file_id = __required(args, "file_id")
     if is_err(file_id) {
       return file_id
     }
@@ -403,11 +403,11 @@ fn __request_for_method(method, args, cfg) {
     )
   }
   if method == "files.representations" {
-    let file_id = __required(args, "file_id")
+    const file_id = __required(args, "file_id")
     if is_err(file_id) {
       return file_id
     }
-    let representation = __text(args?.representation ?? args?.format ?? "pdf")
+    const representation = __text(args?.representation ?? args?.format ?? "pdf")
     return Ok(
       __json_request(
         "GET",
@@ -419,7 +419,7 @@ fn __request_for_method(method, args, cfg) {
     )
   }
   if method == "folders.items" {
-    let folder_id = __text(args?.folder_id ?? args?.folderId ?? "0")
+    const folder_id = __text(args?.folder_id ?? args?.folderId ?? "0")
     return Ok(
       __json_request(
         "GET",
@@ -434,12 +434,12 @@ fn __request_for_method(method, args, cfg) {
     return Ok(__json_request("GET", cfg.api_base_url + "/events", nil, cfg, args))
   }
   if method == "files.upload" {
-    let name = __required(args, "name")
+    const name = __required(args, "name")
     if is_err(name) {
       return name
     }
-    let parent_id = __text(args?.parent_id ?? args?.parentId ?? "0")
-    let body = args?.body ?? args?.content ?? ""
+    const parent_id = __text(args?.parent_id ?? args?.parentId ?? "0")
+    const body = args?.body ?? args?.content ?? ""
     return Ok(
       __upload_request(
         cfg.upload_base_url + "/files/content",
@@ -450,16 +450,16 @@ fn __request_for_method(method, args, cfg) {
     )
   }
   if method == "webhooks.create" {
-    let target_id = __required(args, "target_id")
+    const target_id = __required(args, "target_id")
     if is_err(target_id) {
       return target_id
     }
-    let address = __required(args, "address")
+    const address = __required(args, "address")
     if is_err(address) {
       return address
     }
-    let target_type = __text(args?.target_type ?? args?.targetType ?? "folder")
-    let triggers = args?.triggers ?? ["FILE.UPLOADED", "FILE.DOWNLOADED", "FILE.DELETED", "FILE.TRASHED"]
+    const target_type = __text(args?.target_type ?? args?.targetType ?? "folder")
+    const triggers = args?.triggers ?? ["FILE.UPLOADED", "FILE.DOWNLOADED", "FILE.DELETED", "FILE.TRASHED"]
     return Ok(
       __json_request(
         "POST",
@@ -471,7 +471,7 @@ fn __request_for_method(method, args, cfg) {
     )
   }
   if method == "webhooks.delete" {
-    let webhook_id = __required(args, "webhook_id")
+    const webhook_id = __required(args, "webhook_id")
     if is_err(webhook_id) {
       return webhook_id
     }
@@ -492,7 +492,7 @@ fn __request_for_method(method, args, cfg) {
 }
 
 fn __json_request(method, url, body, cfg, args) {
-  let query = __box_query(args)
+  const query = __box_query(args)
   return {
     method: method,
     url: url + query,
@@ -522,20 +522,20 @@ fn __upload_request(url, attributes, body, cfg) {
 }
 
 fn __box_request(request) {
-  let response = try {
+  const response = try {
     harness.net.request(request.method, request.url, {headers: request.headers, body: request.body})
   }
   if is_err(response) {
     return __err("transport", to_string(unwrap_err(response)))
   }
-  let http_response = unwrap(response)
-  let text = http_response.body ?? ""
-  let content_type = lowercase(__text(__header(http_response.headers ?? {}, "content-type")))
+  const http_response = unwrap(response)
+  const text = http_response.body ?? ""
+  const content_type = lowercase(__text(__header(http_response.headers ?? {}, "content-type")))
   if http_response.status >= 200 && http_response.status < 300 && !contains(content_type, "json")
     && text != "" {
     return {bytes: text, headers: http_response.headers ?? {}}
   }
-  let decoded = try {
+  const decoded = try {
     if text == "" {
       {}
     } else {
@@ -548,7 +548,7 @@ fn __box_request(request) {
     }
     return __err("invalid_response", "Box API returned invalid JSON")
   }
-  let payload = unwrap(decoded)
+  const payload = unwrap(decoded)
   if http_response.status < 200 || http_response.status >= 300 {
     return Err(
       {
@@ -564,20 +564,20 @@ fn __box_request(request) {
 }
 
 fn __config(args) {
-  let access_token = __text(args?.access_token ?? args?.token ?? BOX_STATE.ctx?.access_token)
+  const access_token = __text(args?.access_token ?? args?.token ?? BOX_STATE.ctx?.access_token)
   if access_token == "" {
     return __err("missing_access_token", "box connector requires access_token")
   }
-  let api_base_url = __text(args?.api_base_url ?? args?.apiBaseUrl ?? BOX_STATE.ctx?.api_base_url ?? BOX_API_BASE_URL)
-  let upload_base_url = __text(
+  const api_base_url = __text(args?.api_base_url ?? args?.apiBaseUrl ?? BOX_STATE.ctx?.api_base_url ?? BOX_API_BASE_URL)
+  const upload_base_url = __text(
     args?.upload_base_url ?? args?.uploadBaseUrl ?? BOX_STATE.ctx?.upload_base_url
       ?? BOX_UPLOAD_BASE_URL,
   )
-  let checked_api = __validate_api_url(api_base_url)
+  const checked_api = __validate_api_url(api_base_url)
   if is_err(checked_api) {
     return checked_api
   }
-  let checked_upload = __validate_upload_url(upload_base_url)
+  const checked_upload = __validate_upload_url(upload_base_url)
   if is_err(checked_upload) {
     return checked_upload
   }
@@ -591,7 +591,7 @@ fn __config(args) {
 }
 
 fn __headers(cfg, args) {
-  var headers = {Authorization: "Bearer " + cfg.access_token}
+  let headers = {Authorization: "Bearer " + cfg.access_token}
   if args?.rep_hints != nil {
     headers["X-Rep-Hints"] = __text(args.rep_hints)
   }
@@ -602,12 +602,12 @@ fn __headers(cfg, args) {
 }
 
 fn __box_query(args) {
-  var query = {}
+  let query = {}
   for key in (args ?? {}).keys() {
     if contains(__request_deny_keys(), key) || starts_with(key, "_") {
       continue
     }
-    let mapped = __query_key(key)
+    const mapped = __query_key(key)
     if mapped == "" {
       continue
     }
@@ -616,7 +616,7 @@ fn __box_query(args) {
   if len(query.keys()) == 0 {
     return ""
   }
-  var parts = []
+  let parts = []
   for entry in query.entries() {
     if entry.value == nil {
       continue
@@ -630,7 +630,7 @@ fn __box_query(args) {
 }
 
 fn __query_key(key) {
-  let text = __text(key)
+  const text = __text(key)
   if text == "file_id" || text == "folder_id" || text == "parent_id" || text == "target_id"
     || text == "webhook_id"
     || text == "target_type"
@@ -658,34 +658,34 @@ fn __query_key(key) {
 }
 
 fn __verify_box_signature(raw, body_text) {
-  let primary = __text(
+  const primary = __text(
     raw?.primary_key ?? raw?.primaryKey ?? raw?.metadata?.primary_key ?? BOX_STATE.ctx?.primary_key,
   )
-  let secondary = __text(
+  const secondary = __text(
     raw?.secondary_key ?? raw?.secondaryKey ?? raw?.metadata?.secondary_key
       ?? BOX_STATE.ctx?.secondary_key,
   )
   if primary == "" && secondary == "" {
     return Ok({state: "unsigned", scheme: "box-v2"})
   }
-  let timestamp = __text(__header(raw?.headers ?? {}, "box-delivery-timestamp"))
+  const timestamp = __text(__header(raw?.headers ?? {}, "box-delivery-timestamp"))
   if timestamp == "" {
     return __err("missing_timestamp", "missing BOX-DELIVERY-TIMESTAMP header")
   }
-  let primary_signature = __text(__header(raw?.headers ?? {}, "box-signature-primary"))
-  let secondary_signature = __text(__header(raw?.headers ?? {}, "box-signature-secondary"))
+  const primary_signature = __text(__header(raw?.headers ?? {}, "box-signature-primary"))
+  const secondary_signature = __text(__header(raw?.headers ?? {}, "box-signature-secondary"))
   if primary_signature == "" && secondary_signature == "" {
     return __err("missing_signature", "missing BOX-SIGNATURE-PRIMARY or BOX-SIGNATURE-SECONDARY header")
   }
-  let signed_payload = body_text + timestamp
+  const signed_payload = body_text + timestamp
   if primary != "" && primary_signature != "" {
-    let expected_primary = hmac_sha256_base64(primary, signed_payload)
+    const expected_primary = hmac_sha256_base64(primary, signed_payload)
     if constant_time_eq(expected_primary, primary_signature) {
       return Ok({state: "verified", scheme: "box-v2", key: "primary"})
     }
   }
   if secondary != "" && secondary_signature != "" {
-    let expected_secondary = hmac_sha256_base64(secondary, signed_payload)
+    const expected_secondary = hmac_sha256_base64(secondary, signed_payload)
     if constant_time_eq(expected_secondary, secondary_signature) {
       return Ok({state: "verified", scheme: "box-v2", key: "secondary"})
     }
@@ -736,7 +736,7 @@ fn __request_deny_keys() {
 }
 
 fn __canonical_method(method) {
-  let text = __text(method)
+  const text = __text(method)
   if text == "export_artifact" {
     return "artifact.export_request"
   }
@@ -762,8 +762,8 @@ fn __canonical_method(method) {
 }
 
 fn __required(args, snake_key) {
-  let camel = __snake_to_camel(snake_key)
-  let value = __text(args?.[snake_key] ?? args?.[camel])
+  const camel = __snake_to_camel(snake_key)
+  const value = __text(args?.[snake_key] ?? args?.[camel])
   if value == "" {
     return __err("missing_" + snake_key, "box method requires `" + snake_key + "`")
   }
@@ -793,12 +793,12 @@ fn __snake_to_camel(value) {
 }
 
 fn __validate_api_url(url) {
-  let text = __text(url)
+  const text = __text(url)
   if !starts_with(lowercase(text), "https://") {
     return __err("invalid_api_base_url", "box api base url must be an absolute https URL")
   }
-  let parsed = url_parse(text)
-  let host = lowercase(__text(parsed?.host))
+  const parsed = url_parse(text)
+  const host = lowercase(__text(parsed?.host))
   if !contains(BOX_ALLOWED_API_HOSTS, host) {
     return __err("disallowed_api_base_url", "box api host `" + host + "` is not in the allowlist")
   }
@@ -806,12 +806,12 @@ fn __validate_api_url(url) {
 }
 
 fn __validate_upload_url(url) {
-  let text = __text(url)
+  const text = __text(url)
   if !starts_with(lowercase(text), "https://") {
     return __err("invalid_upload_base_url", "box upload base url must be an absolute https URL")
   }
-  let parsed = url_parse(text)
-  let host = lowercase(__text(parsed?.host))
+  const parsed = url_parse(text)
+  const host = lowercase(__text(parsed?.host))
   if !contains(BOX_ALLOWED_UPLOAD_HOSTS, host) {
     return __err("disallowed_upload_base_url", "box upload host `" + host + "` is not in the allowlist")
   }
@@ -819,7 +819,7 @@ fn __validate_upload_url(url) {
 }
 
 fn __artifact_file_id(args) {
-  let file_id = __text(args?.file_id ?? args?.fileId ?? args?.id)
+  const file_id = __text(args?.file_id ?? args?.fileId ?? args?.id)
   if file_id == "" {
     return __err("missing_file_id", "box artifact request requires `file_id`")
   }
@@ -827,12 +827,12 @@ fn __artifact_file_id(args) {
 }
 
 fn __is_removed_trigger(trigger) {
-  let upper = uppercase(__text(trigger))
+  const upper = uppercase(__text(trigger))
   return upper.contains("DELETED") || upper.contains("TRASHED")
 }
 
 fn __mime_type_from_name(name) {
-  let lower = lowercase(__text(name))
+  const lower = lowercase(__text(name))
   if lower.ends_with(".pdf") {
     return "application/pdf"
   }
@@ -855,7 +855,7 @@ fn __mime_type_from_name(name) {
 }
 
 fn __strip_trailing_slash(value) {
-  let text = __text(value)
+  const text = __text(value)
   if text.ends_with("/") {
     return text[0:len(text) - 1]
   }
@@ -863,7 +863,7 @@ fn __strip_trailing_slash(value) {
 }
 
 fn __header(headers, name) {
-  let wanted = lowercase(name)
+  const wanted = lowercase(name)
   for entry in (headers ?? {}).entries() {
     if lowercase(trim(to_string(entry.key))) == wanted {
       return entry.value
@@ -873,7 +873,7 @@ fn __header(headers, name) {
 }
 
 fn __item_ref(item_id, item_type, item) {
-  let kind = if __text(item_type) == "" {
+  const kind = if __text(item_type) == "" {
     "box_item"
   } else {
     "box_" + __text(item_type)
