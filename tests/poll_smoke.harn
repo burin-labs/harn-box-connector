@@ -37,7 +37,7 @@ pipeline default() {
   shutdown()
   init({access_token: "secret_access"})
   http_mock_clear()
-  let api = "https://api.box.com/2.0"
+  const api = "https://api.box.com/2.0"
   http_mock(
     "GET",
     "https://api.box.com/*",
@@ -66,26 +66,26 @@ pipeline default() {
       ],
     },
   )
-  let first = poll_tick(poll_ctx())
+  const first = poll_tick(poll_ctx())
   expect_eq(len(first.events), 1, "first tick emits one normalized event")
   expect_eq(first.events[0].kind, "box.events.file.uploaded", "poll event kind")
   expect_eq(first.events[0].payload.file_id, "file_1", "poll file id")
   expect_eq(first.events[0].payload.removed, false, "uploaded payload")
   expect_eq(first.cursor.stream_position, "pos_1", "first tick advances stream position")
   expect(first.state.poll_cache.get("box.events:evt_1:file_1") != nil, "first tick persists snapshot")
-  let second = poll_tick(poll_ctx(first.cursor, first.state))
+  const second = poll_tick(poll_ctx(first.cursor, first.state))
   expect_eq(len(second.events), 1, "second tick emits one changed item")
   expect_eq(second.events[0].payload.file_id, "file_2", "second file id")
   expect_eq(second.events[0].payload.removed, true, "deleted event is removed")
   expect_eq(second.cursor.stream_position, "pos_2", "second tick stores cursor")
-  let failed = poll_tick(poll_ctx(second.cursor, second.state))
+  const failed = poll_tick(poll_ctx(second.cursor, second.state))
   expect(is_err(failed), "retryable Box failures return Err without advancing local state")
   expect_eq(unwrap_err(failed).code, "unavailable", "retry error preserves Box code")
-  let retried = poll_tick(poll_ctx(second.cursor, second.state))
+  const retried = poll_tick(poll_ctx(second.cursor, second.state))
   expect_eq(len(retried.events), 1, "retry with same cursor can emit after transient failure")
   expect_eq(retried.events[0].kind, "box.events.file.trashed", "trashed kind")
   expect_eq(retried.events[0].payload.removed, true, "trashed payload")
-  let calls = http_mock_calls({include_sensitive: true})
+  const calls = http_mock_calls({include_sensitive: true})
   expect_eq(len(calls), 4, "one Box request per tick")
   expect(calls[0].url.starts_with(api + "/events?"), "first events URL prefix")
   expect(calls[0].url.contains("stream_type=changes"), "first events stream type query")
@@ -105,7 +105,7 @@ pipeline default() {
       headers: {"content-type": "application/json"},
     },
   )
-  let duplicate = poll_tick(poll_ctx(nil, first.state))
+  const duplicate = poll_tick(poll_ctx(nil, first.state))
   expect_eq(len(duplicate.events), 0, "persisted state dedupes identical event")
   shutdown()
 }
