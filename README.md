@@ -13,13 +13,33 @@ The surface is deliberately connector-shaped, not document-renderer shaped:
 Document rendering and manifest vocabulary stay in `harn-documents`; this
 package owns the external Box boundary.
 
-## Provider
+## Install
+
+Install the tagged package:
+
+```sh
+harn add github.com/burin-labs/harn-box-connector@v0.1.0
+```
+
+For local multi-repository development, use a path dependency:
+
+```toml
+[dependencies]
+harn-box-connector = { path = "../harn-box-connector" }
+```
+
+Use the Harn CLI version pinned in `.harn-version` to run this checkout.
+
+## Configure
 
 - Provider id: `box`
 - API hosts: `api.box.com`, `upload.box.com`
-- Recommended app permissions for artifact workflows:
-  - read/write files and folders
-  - manage webhooks
+- Required secrets: `box/access-token`, `box/webhook-primary-key`
+- Required OAuth scopes: `root_readwrite`, `item_readwrite`, `item_upload`,
+  `manage_webhook`
+
+Start browser-based setup with `harn connect box`. Check its status with
+`harn connect status --connector box --json`.
 
 ## Useful methods
 
@@ -35,7 +55,7 @@ package owns the external Box boundary.
 - `artifact.export_request`
 - `artifact.import_request`
 
-## References
+## Provider references
 
 - Box API reference:
   <https://developer.box.com/reference>
@@ -48,7 +68,7 @@ package owns the external Box boundary.
 - Box PDF representations:
   <https://developer.box.com/guides/representations/pdf>
 
-## Validation
+## Validate
 
 ```sh
 harn connector test . --provider box
