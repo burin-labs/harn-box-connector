@@ -21,7 +21,7 @@ package owns the external Box boundary.
   - read/write files and folders
   - manage webhooks
 
-## Useful Methods
+## Useful methods
 
 - `files.get`
 - `files.content`
