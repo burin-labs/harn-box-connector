@@ -4,7 +4,7 @@ See `AGENTS.md` and the canonical Harn connector authoring guide:
 
 - https://github.com/burin-labs/harn/blob/main/docs/src/connectors/authoring.md
 
-## Provider Notes
+## Provider notes
 
 - Keep Box API calls scoped to `api.box.com` and `upload.box.com`.
 - Prefer least-privilege Box file/folder and webhook permissions for artifact
