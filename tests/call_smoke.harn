@@ -25,23 +25,27 @@ pipeline default() {
       responses: [
         {
           status: 200,
-          body: "{\"type\":\"file\",\"id\":\"file_123\",\"name\":\"Report.docx\",\"sha1\":\"abc123\"}",
+          body:
+            "{\"type\":\"file\",\"id\":\"file_123\",\"name\":\"Report.docx\",\"sha1\":\"abc123\"}",
           headers: {"content-type": "application/json"},
         },
         {
           status: 200,
-          body: "{\"entries\":[{\"type\":\"file\",\"id\":\"file_123\",\"name\":\"Report.docx\"}],\"next_marker\":\"marker_1\",\"limit\":100}",
+          body:
+            "{\"entries\":[{\"type\":\"file\",\"id\":\"file_123\",\"name\":\"Report.docx\"}],\"next_marker\":\"marker_1\",\"limit\":100}",
           headers: {"content-type": "application/json"},
         },
         {status: 200, body: "DOCX-BYTES", headers: {"content-type": "application/octet-stream"}},
         {
           status: 200,
-          body: "{\"type\":\"file\",\"id\":\"file_123\",\"representations\":{\"entries\":[{\"representation\":\"pdf\",\"status\":{\"state\":\"success\"}}]}}",
+          body:
+            "{\"type\":\"file\",\"id\":\"file_123\",\"representations\":{\"entries\":[{\"representation\":\"pdf\",\"status\":{\"state\":\"success\"}}]}}",
           headers: {"content-type": "application/json"},
         },
         {
           status: 200,
-          body: "{\"entries\":[],\"next_stream_position\":\"1152922976252290886\",\"chunk_size\":0}",
+          body:
+            "{\"entries\":[],\"next_stream_position\":\"1152922976252290886\",\"chunk_size\":0}",
           headers: {"content-type": "application/json"},
         },
         {
@@ -59,7 +63,8 @@ pipeline default() {
       responses: [
         {
           status: 201,
-          body: "{\"entries\":[{\"type\":\"file\",\"id\":\"file_upload\",\"name\":\"Report.docx\"}]}",
+          body:
+            "{\"entries\":[{\"type\":\"file\",\"id\":\"file_upload\",\"name\":\"Report.docx\"}]}",
           headers: {"content-type": "application/json"},
         },
       ],
@@ -94,7 +99,10 @@ pipeline default() {
       _approved: true,
     },
   )
-  const upload_rejected = call("files.upload", {name: "Report.docx", parent_id: "0", content: "doc bytes"})
+  const upload_rejected = call(
+    "files.upload",
+    {name: "Report.docx", parent_id: "0", content: "doc bytes"},
+  )
   expect(is_err(upload_rejected), "mutating Box upload requires approval")
   call("files.upload", {name: "Report.docx", parent_id: "0", content: "doc bytes", _approved: true})
   const calls = http_mock_calls({include_sensitive: true})
@@ -141,7 +149,10 @@ pipeline default() {
   expect_eq(import_request.method, "POST", "import method")
   expect_eq(import_request.url, upload + "/files/content", "import URL")
   expect_eq(import_request.media.uri, "artifact://session/report.docx", "import media uri")
-  const descriptor = request_descriptor("files.content", {access_token: "secret_access", file_id: "file_123"})
+  const descriptor = request_descriptor(
+    "files.content",
+    {access_token: "secret_access", file_id: "file_123"},
+  )
   expect(!is_err(descriptor), "content request descriptor builds")
   expect_eq(unwrap(descriptor).url, api + "/files/file_123/content", "content request URL")
   const bad_host = call(

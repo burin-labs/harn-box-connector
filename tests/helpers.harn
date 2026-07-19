@@ -10,8 +10,18 @@ pub fn assert_box_interface() {
   require initialized.initialized, "init stores state"
   const activated = activate(
     [
-      {id: "box.webhook", kind: "webhook", target_id: "12345", secrets: {primary_key: "primary-secret"}},
-      {id: "box.events", kind: "poll", poll: {stream_type: "changes"}, access_token: "secret_access"},
+      {
+        id: "box.webhook",
+        kind: "webhook",
+        target_id: "12345",
+        secrets: {primary_key: "primary-secret"},
+      },
+      {
+        id: "box.events",
+        kind: "poll",
+        poll: {stream_type: "changes"},
+        access_token: "secret_access",
+      },
     ],
   )
   require activated.bindings == 2, "activate counts bindings"

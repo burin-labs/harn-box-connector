@@ -22,7 +22,12 @@ const BOX_OUTBOUND_METHODS = [
   "artifact.import_request",
 ]
 
-const BOX_MUTATING_METHODS = ["files.upload", "webhooks.create", "webhooks.delete", "artifact.import_request"]
+const BOX_MUTATING_METHODS = [
+  "files.upload",
+  "webhooks.create",
+  "webhooks.delete",
+  "artifact.import_request",
+]
 
 type BoxConnectorState = {
   initialized: bool,
@@ -32,7 +37,13 @@ type BoxConnectorState = {
   poll_bindings: dict,
 }
 
-let BOX_STATE: BoxConnectorState = {initialized: false, active: false, ctx: {}, webhook_bindings: {}, poll_bindings: {}}
+let BOX_STATE: BoxConnectorState = {
+  initialized: false,
+  active: false,
+  ctx: {},
+  webhook_bindings: {},
+  poll_bindings: {},
+}
 
 /** Return this connector's Harn provider id. */
 pub fn provider_id() {
@@ -103,14 +114,20 @@ pub fn activate(bindings = []) {
   for binding in bindings ?? [] {
     const binding_id = __text(
       binding?.binding_id ?? binding?.id
-        ?? ("binding-" + to_string(len(webhook_bindings.keys()) + len(poll_bindings.keys()))),
+        ?? ("binding-"
+        + to_string(
+        len(webhook_bindings.keys()) + len(poll_bindings.keys()),
+      )),
     )
     const kind = __text(binding?.kind ?? "webhook")
     if kind == "webhook" {
       const target = __text(binding?.target_id ?? binding?.target?.id ?? binding?.match?.target_id)
       if target != "" {
         if seen_targets.get(target) {
-          return __err("activation", "box connector target `" + target + "` is configured by multiple bindings")
+          return __err(
+            "activation",
+            "box connector target `" + target + "` is configured by multiple bindings",
+          )
         }
         seen_targets[target] = true
       }
@@ -121,7 +138,12 @@ pub fn activate(bindings = []) {
       return __err("activation", "unsupported box binding kind `" + kind + "`")
     }
   }
-  BOX_STATE = BOX_STATE + {active: true, webhook_bindings: webhook_bindings, poll_bindings: poll_bindings}
+  BOX_STATE = BOX_STATE
+    + {
+    active: true,
+    webhook_bindings: webhook_bindings,
+    poll_bindings: poll_bindings,
+  }
   return {
     provider: BOX_PROVIDER_ID,
     bindings: len(webhook_bindings.keys()) + len(poll_bindings.keys()),
@@ -241,7 +263,9 @@ pub fn poll_tick(ctx) {
   }
   const binding = ctx?.binding ?? {}
   const poll = binding?.poll ?? binding?.config?.poll ?? {}
-  const stream_position = __text(ctx?.cursor?.stream_position ?? ctx?.cursor?.cursor ?? poll?.stream_position ?? "now")
+  const stream_position = __text(
+    ctx?.cursor?.stream_position ?? ctx?.cursor?.cursor ?? poll?.stream_position ?? "now",
+  )
   const args = (poll ?? {}) + {stream_position: stream_position}
   const request = __request_for_method("events.get", args, unwrap(cfg))
   if is_err(request) {
@@ -264,7 +288,8 @@ pub fn poll_tick(ctx) {
     if event_id == "" && source_id == "" {
       continue
     }
-    const cache_key = __text(ctx?.binding_id ?? binding?.id ?? "box.events") + ":" + event_id + ":" + source_id
+    const cache_key = __text(ctx?.binding_id ?? binding?.id ?? "box.events") + ":" + event_id + ":"
+      + source_id
     const fingerprint = json_stringify({event_id: event_id, event_type: event_type, source: source})
     if cache.get(cache_key) == fingerprint {
       continue
@@ -322,7 +347,9 @@ pub fn artifact_export_request(args = nil) {
   const format = lowercase(__text(args?.format))
   const name = __text(args?.name ?? "box-artifact")
   const cfg = {
-    api_base_url: __strip_trailing_slash(__text(args?.api_base_url ?? args?.apiBaseUrl ?? BOX_API_BASE_URL)),
+    api_base_url: __strip_trailing_slash(
+      __text(args?.api_base_url ?? args?.apiBaseUrl ?? BOX_API_BASE_URL),
+    ),
   }
   const checked = __validate_api_url(cfg.api_base_url)
   if is_err(checked) {
@@ -373,7 +400,9 @@ pub fn artifact_import_request(args = nil) {
   const parent_id = __text(args?.parent_id ?? args?.parentId ?? "0")
   const mime_type = __text(args?.mime_type ?? args?.mimeType ?? "application/octet-stream")
   const cfg = {
-    upload_base_url: __strip_trailing_slash(__text(args?.upload_base_url ?? args?.uploadBaseUrl ?? BOX_UPLOAD_BASE_URL)),
+    upload_base_url: __strip_trailing_slash(
+      __text(args?.upload_base_url ?? args?.uploadBaseUrl ?? BOX_UPLOAD_BASE_URL),
+    ),
   }
   const checked = __validate_upload_url(cfg.upload_base_url)
   if is_err(checked) {
@@ -402,7 +431,13 @@ fn __request_for_method(method, args, cfg) {
       return file_id
     }
     return Ok(
-      __json_request("GET", cfg.api_base_url + "/files/" + url_encode(unwrap(file_id)), nil, cfg, args),
+      __json_request(
+        "GET",
+        cfg.api_base_url + "/files/" + url_encode(unwrap(file_id)),
+        nil,
+        cfg,
+        args,
+      ),
     )
   }
   if method == "files.content" {
@@ -475,12 +510,22 @@ fn __request_for_method(method, args, cfg) {
       return address
     }
     const target_type = __text(args?.target_type ?? args?.targetType ?? "folder")
-    const triggers = args?.triggers ?? ["FILE.UPLOADED", "FILE.DOWNLOADED", "FILE.DELETED", "FILE.TRASHED"]
+    const triggers = args?.triggers
+      ?? [
+      "FILE.UPLOADED",
+      "FILE.DOWNLOADED",
+      "FILE.DELETED",
+      "FILE.TRASHED",
+    ]
     return Ok(
       __json_request(
         "POST",
         cfg.api_base_url + "/webhooks",
-        {target: {type: target_type, id: unwrap(target_id)}, address: unwrap(address), triggers: triggers},
+        {
+          target: {type: target_type, id: unwrap(target_id)},
+          address: unwrap(address),
+          triggers: triggers,
+        },
         cfg,
         {},
       ),
@@ -504,7 +549,10 @@ fn __request_for_method(method, args, cfg) {
   if method == "webhooks.list" {
     return Ok(__json_request("GET", cfg.api_base_url + "/webhooks", nil, cfg, args))
   }
-  return __err("method_not_found", "box connector does not implement outbound method `" + method + "`")
+  return __err(
+    "method_not_found",
+    "box connector does not implement outbound method `" + method + "`",
+  )
 }
 
 fn __json_request(method, url, body, cfg, args) {
@@ -548,7 +596,8 @@ fn __box_request(request) {
   const text = http_response.body ?? ""
   const content_type = lowercase(__text(__header(http_response.headers ?? {}, "content-type")))
   if http_response.status >= 200 && http_response.status < 300 && !contains(content_type, "json")
-    && text != "" {
+    && text
+    != "" {
     return {bytes: text, headers: http_response.headers ?? {}}
   }
   const decoded = try {
@@ -571,7 +620,10 @@ fn __box_request(request) {
         status: http_response.status,
         code: payload?.code ?? payload?.type ?? "box_error",
         message: payload?.message
-          ?? ("Box API request failed with status " + to_string(http_response.status)),
+          ?? ("Box API request failed with status "
+          + to_string(
+          http_response.status,
+        )),
         provider: BOX_PROVIDER_ID,
       },
     )
@@ -584,7 +636,9 @@ fn __config(args) {
   if access_token == "" {
     return __err("missing_access_token", "box connector requires access_token")
   }
-  const api_base_url = __text(args?.api_base_url ?? args?.apiBaseUrl ?? BOX_STATE.ctx?.api_base_url ?? BOX_API_BASE_URL)
+  const api_base_url = __text(
+    args?.api_base_url ?? args?.apiBaseUrl ?? BOX_STATE.ctx?.api_base_url ?? BOX_API_BASE_URL,
+  )
   const upload_base_url = __text(
     args?.upload_base_url ?? args?.uploadBaseUrl ?? BOX_STATE.ctx?.upload_base_url
       ?? BOX_UPLOAD_BASE_URL,
@@ -648,7 +702,8 @@ fn __box_query(args) {
 fn __query_key(key) {
   const text = __text(key)
   if text == "file_id" || text == "folder_id" || text == "parent_id" || text == "target_id"
-    || text == "webhook_id"
+    || text
+    == "webhook_id"
     || text == "target_type"
     || text == "address"
     || text == "triggers"
@@ -679,7 +734,8 @@ fn __verify_box_signature(raw, body_text) {
   )
   const secondary = __text(
     raw?.secondary_key ?? raw?.secondaryKey ?? raw?.metadata?.secondary_key
-      ?? BOX_STATE.ctx?.secondary_key,
+      ?? BOX_STATE.ctx
+      ?.secondary_key,
   )
   if primary == "" && secondary == "" {
     return Ok({state: "unsigned", scheme: "box-v2"})
@@ -691,7 +747,10 @@ fn __verify_box_signature(raw, body_text) {
   const primary_signature = __text(__header(raw?.headers ?? {}, "box-signature-primary"))
   const secondary_signature = __text(__header(raw?.headers ?? {}, "box-signature-secondary"))
   if primary_signature == "" && secondary_signature == "" {
-    return __err("missing_signature", "missing BOX-SIGNATURE-PRIMARY or BOX-SIGNATURE-SECONDARY header")
+    return __err(
+      "missing_signature",
+      "missing BOX-SIGNATURE-PRIMARY or BOX-SIGNATURE-SECONDARY header",
+    )
   }
   const signed_payload = body_text + timestamp
   if primary != "" && primary_signature != "" {
@@ -706,7 +765,10 @@ fn __verify_box_signature(raw, body_text) {
       return Ok({state: "verified", scheme: "box-v2", key: "secondary"})
     }
   }
-  return __err("invalid_signature", "Box webhook signature did not match body plus delivery timestamp")
+  return __err(
+    "invalid_signature",
+    "Box webhook signature did not match body plus delivery timestamp",
+  )
 }
 
 fn __body_text(raw) {
@@ -829,7 +891,10 @@ fn __validate_upload_url(url) {
   const parsed = url_parse(text)
   const host = lowercase(__text(parsed?.host))
   if !contains(BOX_ALLOWED_UPLOAD_HOSTS, host) {
-    return __err("disallowed_upload_base_url", "box upload host `" + host + "` is not in the allowlist")
+    return __err(
+      "disallowed_upload_base_url",
+      "box upload host `" + host + "` is not in the allowlist",
+    )
   }
   return Ok(text)
 }
