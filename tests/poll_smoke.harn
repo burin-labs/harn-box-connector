@@ -19,7 +19,9 @@ fn poll_ctx(cursor = nil, state = nil, extra = nil) {
 }
 
 fn events_body(entries, next_position) {
-  return json_stringify({entries: entries, next_stream_position: next_position, chunk_size: len(entries)})
+  return json_stringify(
+    {entries: entries, next_stream_position: next_position, chunk_size: len(entries)},
+  )
 }
 
 fn file_event(event_id, event_type, file_id, name) {
@@ -45,12 +47,18 @@ pipeline default() {
       responses: [
         {
           status: 200,
-          body: events_body([file_event("evt_1", "FILE.UPLOADED", "file_1", "Report 1.docx")], "pos_1"),
+          body: events_body(
+            [file_event("evt_1", "FILE.UPLOADED", "file_1", "Report 1.docx")],
+            "pos_1",
+          ),
           headers: {"content-type": "application/json"},
         },
         {
           status: 200,
-          body: events_body([file_event("evt_2", "FILE.DELETED", "file_2", "Report 2.pdf")], "pos_2"),
+          body: events_body(
+            [file_event("evt_2", "FILE.DELETED", "file_2", "Report 2.pdf")],
+            "pos_2",
+          ),
           headers: {"content-type": "application/json"},
         },
         {
@@ -60,7 +68,10 @@ pipeline default() {
         },
         {
           status: 200,
-          body: events_body([file_event("evt_3", "FILE.TRASHED", "file_3", "Report 3.docx")], "pos_3"),
+          body: events_body(
+            [file_event("evt_3", "FILE.TRASHED", "file_3", "Report 3.docx")],
+            "pos_3",
+          ),
           headers: {"content-type": "application/json"},
         },
       ],
@@ -72,7 +83,10 @@ pipeline default() {
   expect_eq(first.events[0].payload.file_id, "file_1", "poll file id")
   expect_eq(first.events[0].payload.removed, false, "uploaded payload")
   expect_eq(first.cursor.stream_position, "pos_1", "first tick advances stream position")
-  expect(first.state.poll_cache.get("box.events:evt_1:file_1") != nil, "first tick persists snapshot")
+  expect(
+    first.state.poll_cache.get("box.events:evt_1:file_1") != nil,
+    "first tick persists snapshot",
+  )
   const second = poll_tick(poll_ctx(first.cursor, first.state))
   expect_eq(len(second.events), 1, "second tick emits one changed item")
   expect_eq(second.events[0].payload.file_id, "file_2", "second file id")

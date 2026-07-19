@@ -25,10 +25,14 @@ pipeline default() {
   expect_eq(unsigned.event.signature_status.state, "unsigned", "unsigned state")
   expect_eq(unsigned.event.payload.removed, true, "deleted is removed")
   init({primary_key: secret})
-  const bad_signature = normalize_inbound({body_text: body, headers: box_signature_headers("wrong-secret", body)})
+  const bad_signature = normalize_inbound(
+    {body_text: body, headers: box_signature_headers("wrong-secret", body)},
+  )
   expect_eq(bad_signature.type, "reject", "wrong signature rejects")
   expect_eq(bad_signature.reject.status, 401, "wrong signature status")
-  const missing_timestamp = normalize_inbound({body_text: body, headers: {"box-signature-primary": "abc"}})
+  const missing_timestamp = normalize_inbound(
+    {body_text: body, headers: {"box-signature-primary": "abc"}},
+  )
   expect_eq(missing_timestamp.type, "reject", "missing timestamp rejects")
   expect_eq(missing_timestamp.reject.code, "missing_timestamp", "missing timestamp code")
   const missing = normalize_inbound({body_text: "{}", headers: box_signature_headers(secret, "{}")})
