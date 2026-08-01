@@ -8,17 +8,17 @@ import {
 } from "../src/lib"
 import { expect, expect_eq } from "./assertions"
 
-pipeline default() {
-  egress_policy({allow: ["api.box.com", "upload.box.com"], default: "deny"})
-  shutdown()
-  const normalized = init("invalid-context")
+pipeline default(harness: Harness) {
+  harness.net.egress_policy({allow: ["api.box.com", "upload.box.com"], default: "deny"})
+  shutdown(harness)
+  const normalized = init(harness, "invalid-context")
   expect_eq(normalized.ctx, {}, "non-dict init context is normalized")
-  const initialized = init({access_token: "secret_access"})
+  const initialized = init(harness, {access_token: "secret_access"})
   expect_eq(initialized.ctx.access_token, "secret_access", "dict init context is retained")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
   const api = "https://api.box.com/2.0"
   const upload = "https://upload.box.com/api/2.0"
-  http_mock(
+  harness.testing.http_mock(
     "*",
     "https://api.box.com/*",
     {
@@ -56,7 +56,7 @@ pipeline default() {
       ],
     },
   )
-  http_mock(
+  harness.testing.http_mock(
     "*",
     "https://upload.box.com/*",
     {
@@ -70,15 +70,20 @@ pipeline default() {
       ],
     },
   )
-  const file = call("files.get", {file_id: "file_123", fields: "id,name,sha1"})
+  const file = call(harness, "files.get", {file_id: "file_123", fields: "id,name,sha1"})
   expect_eq(file.id, "file_123", "file response")
-  call("folders.items", {folder_id: "0", limit: 10, fields: "id,type,name"})
-  const downloaded = call("files.content", {file_id: "file_123"})
+  call(harness, "folders.items", {folder_id: "0", limit: 10, fields: "id,type,name"})
+  const downloaded = call(harness, "files.content", {file_id: "file_123"})
   expect_eq(downloaded.bytes, "DOCX-BYTES", "download bytes response")
-  const represented = call("files.representations", {file_id: "file_123", representation: "pdf"})
+  const represented = call(
+    harness,
+    "files.representations",
+    {file_id: "file_123", representation: "pdf"},
+  )
   expect_eq(represented.id, "file_123", "representation response")
-  call("events.get", {stream_position: "now", stream_type: "changes", limit: 100})
+  call(harness, "events.get", {stream_position: "now", stream_type: "changes", limit: 100})
   const webhook_rejected = call(
+    harness,
     "webhooks.create",
     {
       target_id: "0",
@@ -90,6 +95,7 @@ pipeline default() {
   expect(is_err(webhook_rejected), "mutating Box webhook create requires approval")
   expect_eq(unwrap_err(webhook_rejected).code, "approval_required", "approval code")
   call(
+    harness,
     "webhooks.create",
     {
       target_id: "0",
@@ -100,12 +106,17 @@ pipeline default() {
     },
   )
   const upload_rejected = call(
+    harness,
     "files.upload",
     {name: "Report.docx", parent_id: "0", content: "doc bytes"},
   )
   expect(is_err(upload_rejected), "mutating Box upload requires approval")
-  call("files.upload", {name: "Report.docx", parent_id: "0", content: "doc bytes", _approved: true})
-  const calls = http_mock_calls({include_sensitive: true})
+  call(
+    harness,
+    "files.upload",
+    {name: "Report.docx", parent_id: "0", content: "doc bytes", _approved: true},
+  )
+  const calls = harness.testing.http_mock_calls({include_sensitive: true})
   expect_eq(len(calls), 7, "all expected outbound methods dispatched")
   expect_eq(calls[0].method, "GET", "file get uses GET")
   expect_eq(calls[0].url, api + "/files/file_123?fields=id%2Cname%2Csha1", "file URL")
@@ -156,11 +167,12 @@ pipeline default() {
   expect(!is_err(descriptor), "content request descriptor builds")
   expect_eq(unwrap(descriptor).url, api + "/files/file_123/content", "content request URL")
   const bad_host = call(
+    harness,
     "files.get",
     {file_id: "file_123", access_token: "secret_access", api_base_url: "https://evil.example/2.0"},
   )
   expect(is_err(bad_host), "disallowed api_base_url rejected")
   expect_eq(unwrap_err(bad_host).code, "disallowed_api_base_url", "disallowed host code")
-  http_mock_clear()
-  shutdown()
+  harness.testing.http_mock_clear()
+  shutdown(harness)
 }
