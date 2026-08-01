@@ -2,11 +2,12 @@ import { init, normalize_inbound, shutdown } from "../src/lib"
 import { expect, expect_eq } from "./assertions"
 import { assert_box_interface, box_signature_headers, box_webhook_body } from "./helpers"
 
-pipeline default() {
+pipeline default(harness: Harness) {
   const secret = "primary-secret"
-  assert_box_interface()
+  assert_box_interface(harness)
   const body = box_webhook_body()
   const event = normalize_inbound(
+    harness,
     {primary_key: secret, body_text: body, headers: box_signature_headers(secret, body)},
   )
   expect_eq(event.type, "event", "Box webhook envelope type")
@@ -19,24 +20,29 @@ pipeline default() {
   expect_eq(event.event.payload.removed, false, "uploaded is not removed")
   expect(event.event.dedupe_key.contains("evt_webhook_123"), "dedupe key includes event id")
   expect_eq(event.event.source_refs[0].kind, "box_file", "source ref kind")
-  shutdown()
-  const unsigned = normalize_inbound({body: box_webhook_body("FILE.DELETED")})
+  shutdown(harness)
+  const unsigned = normalize_inbound(harness, {body: box_webhook_body("FILE.DELETED")})
   expect_eq(unsigned.type, "event", "unsigned webhook can be accepted when no keys configured")
   expect_eq(unsigned.event.signature_status.state, "unsigned", "unsigned state")
   expect_eq(unsigned.event.payload.removed, true, "deleted is removed")
-  init({primary_key: secret})
+  init(harness, {primary_key: secret})
   const bad_signature = normalize_inbound(
+    harness,
     {body_text: body, headers: box_signature_headers("wrong-secret", body)},
   )
   expect_eq(bad_signature.type, "reject", "wrong signature rejects")
   expect_eq(bad_signature.reject.status, 401, "wrong signature status")
   const missing_timestamp = normalize_inbound(
+    harness,
     {body_text: body, headers: {"box-signature-primary": "abc"}},
   )
   expect_eq(missing_timestamp.type, "reject", "missing timestamp rejects")
   expect_eq(missing_timestamp.reject.code, "missing_timestamp", "missing timestamp code")
-  const missing = normalize_inbound({body_text: "{}", headers: box_signature_headers(secret, "{}")})
+  const missing = normalize_inbound(
+    harness,
+    {body_text: "{}", headers: box_signature_headers(secret, "{}")},
+  )
   expect_eq(missing.type, "reject", "missing trigger rejects")
   expect_eq(missing.reject.status, 400, "missing trigger status")
-  shutdown()
+  shutdown(harness)
 }

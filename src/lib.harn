@@ -93,7 +93,7 @@ pub fn payload_schema() {
 }
 
 /** Initialize connector state with orchestrator context. */
-pub fn init(ctx = nil) {
+pub fn init(harness: Harness, ctx = nil) {
   BOX_STATE = BOX_STATE
     + {
     initialized: true,
@@ -107,7 +107,7 @@ pub fn init(ctx = nil) {
 }
 
 /** Activate webhook and poll bindings. */
-pub fn activate(bindings = []) {
+pub fn activate(harness: Harness, bindings = []) {
   let webhook_bindings = {}
   let poll_bindings = {}
   let seen_targets = {}
@@ -153,7 +153,7 @@ pub fn activate(bindings = []) {
 }
 
 /** Clear connector lifecycle state. */
-pub fn shutdown() {
+pub fn shutdown(harness: Harness) {
   BOX_STATE = {initialized: false, active: false, ctx: {}, webhook_bindings: {}, poll_bindings: {}}
   return {active: false, provider: BOX_PROVIDER_ID}
 }
@@ -164,7 +164,7 @@ pub fn shutdown() {
  * Box sends a single webhook_event object and signs `body + delivery timestamp`
  * with one of two configured signature keys.
  */
-pub fn normalize_inbound(raw) {
+pub fn normalize_inbound(harness: Harness, raw) {
   const body_text = __body_text(raw)
   const verified = __verify_box_signature(raw, body_text)
   if is_err(verified) {
@@ -224,7 +224,7 @@ pub fn normalize_inbound(raw) {
 }
 
 /** Dispatch one Box outbound method. */
-pub fn call(method, args = nil) {
+pub fn call(harness: Harness, method, args = nil) {
   const name = __canonical_method(method)
   if name == "artifact.export_request" {
     return artifact_export_request(args ?? {})
@@ -243,7 +243,7 @@ pub fn call(method, args = nil) {
   if is_err(request) {
     return request
   }
-  return __box_request(unwrap(request))
+  return __box_request(harness, unwrap(request))
 }
 
 /** Build the deterministic HTTP descriptor for a Box method. */
@@ -256,7 +256,7 @@ pub fn request_descriptor(method, args = nil) {
 }
 
 /** Poll Box events and normalize file/folder changes from Harn-managed state. */
-pub fn poll_tick(ctx) {
+pub fn poll_tick(harness: Harness, ctx) {
   const cfg = __config((ctx?.binding?.config ?? {}) + (ctx?.binding ?? {}) + (ctx ?? {}))
   if is_err(cfg) {
     return cfg
@@ -271,7 +271,7 @@ pub fn poll_tick(ctx) {
   if is_err(request) {
     return request
   }
-  const response = __box_request(unwrap(request))
+  const response = __box_request(harness, unwrap(request))
   if is_err(response) {
     return response
   }
@@ -585,7 +585,7 @@ fn __upload_request(url, attributes, body, cfg) {
   }
 }
 
-fn __box_request(request) {
+fn __box_request(harness: Harness, request) {
   const response = try {
     harness.net.request(request.method, request.url, {headers: request.headers, body: request.body})
   }
