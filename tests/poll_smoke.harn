@@ -34,7 +34,7 @@ fn file_event(event_id, event_type, file_id, name) {
   }
 }
 
-pipeline default(harness: Harness) {
+pipeline test_poll_smoke(harness: Harness) {
   harness.net.egress_policy({allow: ["api.box.com"], default: "deny"})
   shutdown(harness)
   init(harness, {access_token: "secret_access"})

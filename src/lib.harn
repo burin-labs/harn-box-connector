@@ -243,7 +243,7 @@ pub fn call(harness: Harness, method, args = nil) {
   if is_err(request) {
     return request
   }
-  return __box_request(harness, unwrap(request))
+  return __box_request(harness.net, unwrap(request))
 }
 
 /** Build the deterministic HTTP descriptor for a Box method. */
@@ -271,7 +271,7 @@ pub fn poll_tick(harness: Harness, ctx) {
   if is_err(request) {
     return request
   }
-  const response = __box_request(harness, unwrap(request))
+  const response = __box_request(harness.net, unwrap(request))
   if is_err(response) {
     return response
   }
@@ -585,9 +585,9 @@ fn __upload_request(url, attributes, body, cfg) {
   }
 }
 
-fn __box_request(harness: Harness, request) {
+fn __box_request(harness: HarnessNet, request) {
   const response = try {
-    harness.net.request(request.method, request.url, {headers: request.headers, body: request.body})
+    harness.request(request.method, request.url, {headers: request.headers, body: request.body})
   }
   if is_err(response) {
     return __err("transport", to_string(unwrap_err(response)))

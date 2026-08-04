@@ -2,7 +2,7 @@ import { init, normalize_inbound, shutdown } from "../src/lib"
 import { expect, expect_eq } from "./assertions"
 import { assert_box_interface, box_signature_headers, box_webhook_body } from "./helpers"
 
-pipeline default(harness: Harness) {
+pipeline test_normalize_smoke(harness: Harness) {
   const secret = "primary-secret"
   assert_box_interface(harness)
   const body = box_webhook_body()
