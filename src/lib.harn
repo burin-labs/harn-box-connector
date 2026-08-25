@@ -96,13 +96,13 @@ pub fn payload_schema() {
 pub fn init(harness: Harness, ctx = nil) {
   BOX_STATE = BOX_STATE
     + {
-    initialized: true,
-    ctx: if type_of(ctx) == "dict" {
-      ctx
-    } else {
-      {}
-    },
-  }
+      initialized: true,
+      ctx: if type_of(ctx) == "dict" {
+        ctx
+      } else {
+        {}
+      },
+    }
   return BOX_STATE
 }
 
@@ -115,9 +115,7 @@ pub fn activate(harness: Harness, bindings = []) {
     const binding_id = __text(
       binding?.binding_id ?? binding?.id
         ?? ("binding-"
-        + to_string(
-        len(webhook_bindings.keys()) + len(poll_bindings.keys()),
-      )),
+          + to_string(len(webhook_bindings.keys()) + len(poll_bindings.keys()))),
     )
     const kind = __text(binding?.kind ?? "webhook")
     if kind == "webhook" {
@@ -139,11 +137,7 @@ pub fn activate(harness: Harness, bindings = []) {
     }
   }
   BOX_STATE = BOX_STATE
-    + {
-    active: true,
-    webhook_bindings: webhook_bindings,
-    poll_bindings: poll_bindings,
-  }
+    + {active: true, webhook_bindings: webhook_bindings, poll_bindings: poll_bindings}
   return {
     provider: BOX_PROVIDER_ID,
     bindings: len(webhook_bindings.keys()) + len(poll_bindings.keys()),
@@ -299,36 +293,36 @@ pub fn poll_tick(harness: Harness, ctx) {
     const source_type = __text(source?.type)
     events = events
       + [
-      {
-        provider: BOX_PROVIDER_ID,
-        kind: event_kind,
-        occurred_at: entry?.created_at ?? entry?.recorded_at ?? ctx?.tick_at,
-        dedupe_key: __event_dedupe_key(event_kind, event_id, source_id),
-        payload: {
+        {
           provider: BOX_PROVIDER_ID,
-          event: event_kind,
-          event_type: event_kind,
-          box_event_type: event_type,
-          event_id: event_id,
-          item_id: source_id,
-          item_type: source_type,
-          file_id: if source_type == "file" {
-            source_id
-          } else {
-            nil
+          kind: event_kind,
+          occurred_at: entry?.created_at ?? entry?.recorded_at ?? ctx?.tick_at,
+          dedupe_key: __event_dedupe_key(event_kind, event_id, source_id),
+          payload: {
+            provider: BOX_PROVIDER_ID,
+            event: event_kind,
+            event_type: event_kind,
+            box_event_type: event_type,
+            event_id: event_id,
+            item_id: source_id,
+            item_type: source_type,
+            file_id: if source_type == "file" {
+              source_id
+            } else {
+              nil
+            },
+            folder_id: if source_type == "folder" {
+              source_id
+            } else {
+              nil
+            },
+            name: source?.name,
+            removed: __is_removed_trigger(event_type),
+            raw: entry,
           },
-          folder_id: if source_type == "folder" {
-            source_id
-          } else {
-            nil
-          },
-          name: source?.name,
-          removed: __is_removed_trigger(event_type),
-          raw: entry,
+          source_refs: [__item_ref(source_id, source_type, source)],
         },
-        source_refs: [__item_ref(source_id, source_type, source)],
-      },
-    ]
+      ]
   }
   const next_position = payload?.next_stream_position ?? stream_position
   return {
@@ -511,12 +505,7 @@ fn __request_for_method(method, args, cfg) {
     }
     const target_type = __text(args?.target_type ?? args?.targetType ?? "folder")
     const triggers = args?.triggers
-      ?? [
-      "FILE.UPLOADED",
-      "FILE.DOWNLOADED",
-      "FILE.DELETED",
-      "FILE.TRASHED",
-    ]
+      ?? ["FILE.UPLOADED", "FILE.DOWNLOADED", "FILE.DELETED", "FILE.TRASHED"]
     return Ok(
       __json_request(
         "POST",
@@ -597,7 +586,7 @@ fn __box_request(net: HarnessNet, request) {
   const content_type = lowercase(__text(__header(http_response.headers ?? {}, "content-type")))
   if http_response.status >= 200 && http_response.status < 300 && !contains(content_type, "json")
     && text
-    != "" {
+      != "" {
     return {bytes: text, headers: http_response.headers ?? {}}
   }
   const decoded = try {
@@ -621,9 +610,7 @@ fn __box_request(net: HarnessNet, request) {
         code: payload?.code ?? payload?.type ?? "box_error",
         message: payload?.message
           ?? ("Box API request failed with status "
-          + to_string(
-          http_response.status,
-        )),
+            + to_string(http_response.status)),
         provider: BOX_PROVIDER_ID,
       },
     )
@@ -703,7 +690,7 @@ fn __query_key(key) {
   const text = __text(key)
   if text == "file_id" || text == "folder_id" || text == "parent_id" || text == "target_id"
     || text
-    == "webhook_id"
+      == "webhook_id"
     || text == "target_type"
     || text == "address"
     || text == "triggers"
@@ -734,8 +721,7 @@ fn __verify_box_signature(raw, body_text) {
   )
   const secondary = __text(
     raw?.secondary_key ?? raw?.secondaryKey ?? raw?.metadata?.secondary_key
-      ?? BOX_STATE.ctx
-      ?.secondary_key,
+      ?? BOX_STATE.ctx?.secondary_key,
   )
   if primary == "" && secondary == "" {
     return Ok({state: "unsigned", scheme: "box-v2"})
