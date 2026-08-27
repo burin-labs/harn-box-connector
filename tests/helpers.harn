@@ -31,7 +31,7 @@ pub fn assert_box_interface(harness: Harness) {
 }
 
 /** Build a Box V2 webhook body. */
-pub fn box_webhook_body(trigger = "FILE.UPLOADED", source = nil) {
+pub fn box_webhook_body(trigger: any = "FILE.UPLOADED", source: any = nil) {
   return json_stringify(
     {
       type: "webhook_event",
@@ -45,7 +45,7 @@ pub fn box_webhook_body(trigger = "FILE.UPLOADED", source = nil) {
 }
 
 /** Build Box V2 webhook signature headers for a body and timestamp. */
-pub fn box_signature_headers(secret, body, timestamp = "2026-07-06T12:00:00-07:00") {
+pub fn box_signature_headers(secret: any, body: any, timestamp: any = "2026-07-06T12:00:00-07:00") {
   return {
     "box-delivery-timestamp": timestamp,
     "box-signature-primary": hmac_sha256_base64(secret, body + timestamp),
