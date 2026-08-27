@@ -1,7 +1,7 @@
 import { init, poll_tick, shutdown } from "../src/lib"
 import { expect, expect_eq } from "./assertions"
 
-fn poll_ctx(cursor = nil, state = nil, extra = nil) {
+fn poll_ctx(cursor: any = nil, state: any = nil, extra: any = nil) {
   return {
     provider_id: "box",
     binding_id: "box.events",
@@ -18,13 +18,13 @@ fn poll_ctx(cursor = nil, state = nil, extra = nil) {
     + (extra ?? {})
 }
 
-fn events_body(entries, next_position) {
+fn events_body(entries: any, next_position: any) {
   return json_stringify(
     {entries: entries, next_stream_position: next_position, chunk_size: len(entries)},
   )
 }
 
-fn file_event(event_id, event_type, file_id, name) {
+fn file_event(event_id: any, event_type: any, file_id: any, name: any) {
   return {
     type: "event",
     event_id: event_id,

@@ -93,7 +93,7 @@ pub fn payload_schema() {
 }
 
 /** Initialize connector state with orchestrator context. */
-pub fn init(harness: Harness, ctx = nil) {
+pub fn init(harness: Harness, ctx: any = nil) {
   BOX_STATE = BOX_STATE
     + {
       initialized: true,
@@ -107,7 +107,7 @@ pub fn init(harness: Harness, ctx = nil) {
 }
 
 /** Activate webhook and poll bindings. */
-pub fn activate(harness: Harness, bindings = []) {
+pub fn activate(harness: Harness, bindings: any = []) {
   let webhook_bindings = {}
   let poll_bindings = {}
   let seen_targets = {}
@@ -158,7 +158,7 @@ pub fn shutdown(harness: Harness) {
  * Box sends a single webhook_event object and signs `body + delivery timestamp`
  * with one of two configured signature keys.
  */
-pub fn normalize_inbound(harness: Harness, raw) {
+pub fn normalize_inbound(harness: Harness, raw: any) {
   const body_text = __body_text(raw)
   const verified = __verify_box_signature(raw, body_text)
   if is_err(verified) {
@@ -218,7 +218,7 @@ pub fn normalize_inbound(harness: Harness, raw) {
 }
 
 /** Dispatch one Box outbound method. */
-pub fn call(harness: Harness, method, args = nil) {
+pub fn call(harness: Harness, method: any, args: any = nil) {
   const name = __canonical_method(method)
   if name == "artifact.export_request" {
     return artifact_export_request(args ?? {})
@@ -241,7 +241,7 @@ pub fn call(harness: Harness, method, args = nil) {
 }
 
 /** Build the deterministic HTTP descriptor for a Box method. */
-pub fn request_descriptor(method, args = nil) {
+pub fn request_descriptor(method: any, args: any = nil) {
   const cfg = __config(args ?? {})
   if is_err(cfg) {
     return cfg
@@ -250,7 +250,7 @@ pub fn request_descriptor(method, args = nil) {
 }
 
 /** Poll Box events and normalize file/folder changes from Harn-managed state. */
-pub fn poll_tick(harness: Harness, ctx) {
+pub fn poll_tick(harness: Harness, ctx: any) {
   const cfg = __config((ctx?.binding?.config ?? {}) + (ctx?.binding ?? {}) + (ctx ?? {}))
   if is_err(cfg) {
     return cfg
@@ -333,7 +333,7 @@ pub fn poll_tick(harness: Harness, ctx) {
 }
 
 /** Build a deterministic Box export/download descriptor for an artifact. */
-pub fn artifact_export_request(args = nil) {
+pub fn artifact_export_request(args: any = nil) {
   const file_id = __artifact_file_id(args ?? {})
   if is_err(file_id) {
     return file_id
@@ -386,7 +386,7 @@ pub fn artifact_export_request(args = nil) {
 }
 
 /** Build a deterministic Box upload descriptor for a local artifact. */
-pub fn artifact_import_request(args = nil) {
+pub fn artifact_import_request(args: any = nil) {
   const name = __required(args, "name")
   if is_err(name) {
     return name
@@ -418,7 +418,7 @@ pub fn artifact_import_request(args = nil) {
   }
 }
 
-fn __request_for_method(method, args, cfg) {
+fn __request_for_method(method: any, args: any, cfg: any) {
   if method == "files.get" {
     const file_id = __required(args, "file_id")
     if is_err(file_id) {
@@ -544,7 +544,7 @@ fn __request_for_method(method, args, cfg) {
   )
 }
 
-fn __json_request(method, url, body, cfg, args) {
+fn __json_request(method: any, url: any, body: any, cfg: any, args: any) {
   const query = __box_query(args)
   return {
     method: method,
@@ -560,11 +560,11 @@ fn __json_request(method, url, body, cfg, args) {
   }
 }
 
-fn __binary_request(method, url, cfg) {
+fn __binary_request(method: any, url: any, cfg: any) {
   return {method: method, url: url, headers: __headers(cfg, {})}
 }
 
-fn __upload_request(url, attributes, body, cfg) {
+fn __upload_request(url: any, attributes: any, body: any, cfg: any) {
   return {
     method: "POST",
     url: url,
@@ -574,7 +574,7 @@ fn __upload_request(url, attributes, body, cfg) {
   }
 }
 
-fn __box_request(net: HarnessNet, request) {
+fn __box_request(net: HarnessNet, request: any) {
   const response = try {
     net.request(request.method, request.url, {headers: request.headers, body: request.body})
   }
@@ -618,7 +618,7 @@ fn __box_request(net: HarnessNet, request) {
   return payload
 }
 
-fn __config(args) {
+fn __config(args: any) {
   const access_token = __text(args?.access_token ?? args?.token ?? BOX_STATE.ctx?.access_token)
   if access_token == "" {
     return __err("missing_access_token", "box connector requires access_token")
@@ -647,7 +647,7 @@ fn __config(args) {
   )
 }
 
-fn __headers(cfg, args) {
+fn __headers(cfg: any, args: any) {
   let headers = {Authorization: "Bearer " + cfg.access_token}
   if args?.rep_hints != nil {
     headers["X-Rep-Hints"] = __text(args.rep_hints)
@@ -658,7 +658,7 @@ fn __headers(cfg, args) {
   return headers
 }
 
-fn __box_query(args) {
+fn __box_query(args: any) {
   let query = {}
   for key in (args ?? {}).keys() {
     if contains(__request_deny_keys(), key) || starts_with(key, "_") {
@@ -686,7 +686,7 @@ fn __box_query(args) {
   return "?" + parts.join("&")
 }
 
-fn __query_key(key) {
+fn __query_key(key: any) {
   const text = __text(key)
   if text == "file_id" || text == "folder_id" || text == "parent_id" || text == "target_id"
     || text
@@ -715,7 +715,7 @@ fn __query_key(key) {
   return text
 }
 
-fn __verify_box_signature(raw, body_text) {
+fn __verify_box_signature(raw: any, body_text: any) {
   const primary = __text(
     raw?.primary_key ?? raw?.primaryKey ?? raw?.metadata?.primary_key ?? BOX_STATE.ctx?.primary_key,
   )
@@ -757,7 +757,7 @@ fn __verify_box_signature(raw, body_text) {
   )
 }
 
-fn __body_text(raw) {
+fn __body_text(raw: any) {
   if type_of(raw?.body_text) == "string" {
     return raw.body_text
   }
@@ -767,7 +767,7 @@ fn __body_text(raw) {
   return json_stringify(raw?.body_json ?? raw?.body ?? raw ?? {})
 }
 
-fn __body_json(raw) {
+fn __body_json(raw: any) {
   if raw?.body_json != nil {
     return Ok(raw.body_json)
   }
@@ -799,7 +799,7 @@ fn __request_deny_keys() {
   ]
 }
 
-fn __canonical_method(method) {
+fn __canonical_method(method: any) {
   const text = __text(method)
   if text == "export_artifact" {
     return "artifact.export_request"
@@ -825,7 +825,7 @@ fn __canonical_method(method) {
   return text
 }
 
-fn __required(args, snake_key) {
+fn __required(args: any, snake_key: any) {
   const camel = __snake_to_camel(snake_key)
   const value = __text(args?.[snake_key] ?? args?.[camel])
   if value == "" {
@@ -834,7 +834,7 @@ fn __required(args, snake_key) {
   return Ok(value)
 }
 
-fn __snake_to_camel(value) {
+fn __snake_to_camel(value: any) {
   if value == "api_base_url" {
     return "apiBaseUrl"
   }
@@ -856,7 +856,7 @@ fn __snake_to_camel(value) {
   return value
 }
 
-fn __validate_api_url(url) {
+fn __validate_api_url(url: any) {
   const text = __text(url)
   if !starts_with(lowercase(text), "https://") {
     return __err("invalid_api_base_url", "box api base url must be an absolute https URL")
@@ -869,7 +869,7 @@ fn __validate_api_url(url) {
   return Ok(text)
 }
 
-fn __validate_upload_url(url) {
+fn __validate_upload_url(url: any) {
   const text = __text(url)
   if !starts_with(lowercase(text), "https://") {
     return __err("invalid_upload_base_url", "box upload base url must be an absolute https URL")
@@ -885,7 +885,7 @@ fn __validate_upload_url(url) {
   return Ok(text)
 }
 
-fn __artifact_file_id(args) {
+fn __artifact_file_id(args: any) {
   const file_id = __text(args?.file_id ?? args?.fileId ?? args?.id)
   if file_id == "" {
     return __err("missing_file_id", "box artifact request requires `file_id`")
@@ -893,12 +893,12 @@ fn __artifact_file_id(args) {
   return Ok(file_id)
 }
 
-fn __is_removed_trigger(trigger) {
+fn __is_removed_trigger(trigger: any) {
   const upper = uppercase(__text(trigger))
   return upper.contains("DELETED") || upper.contains("TRASHED")
 }
 
-fn __mime_type_from_name(name) {
+fn __mime_type_from_name(name: any) {
   const lower = lowercase(__text(name))
   if lower.ends_with(".pdf") {
     return "application/pdf"
@@ -921,7 +921,7 @@ fn __mime_type_from_name(name) {
   return "application/octet-stream"
 }
 
-fn __strip_trailing_slash(value) {
+fn __strip_trailing_slash(value: any) {
   const text = __text(value)
   if text.ends_with("/") {
     return text[0:len(text) - 1]
@@ -929,7 +929,7 @@ fn __strip_trailing_slash(value) {
   return text
 }
 
-fn __header(headers, name) {
+fn __header(headers: any, name: any) {
   const wanted = lowercase(name)
   for entry in (headers ?? {}).entries() {
     if lowercase(trim(to_string(entry.key))) == wanted {
@@ -939,7 +939,7 @@ fn __header(headers, name) {
   return nil
 }
 
-fn __item_ref(item_id, item_type, item) {
+fn __item_ref(item_id: any, item_type: any, item: any) {
   const kind = if __text(item_type) == "" {
     "box_item"
   } else {
@@ -958,21 +958,21 @@ fn __item_ref(item_id, item_type, item) {
   }
 }
 
-fn __event_dedupe_key(event, event_id, source_id) {
+fn __event_dedupe_key(event: any, event_id: any, source_id: any) {
   return BOX_PROVIDER_ID + ":" + __text(event) + ":" + __text(event_id) + ":" + __text(source_id)
 }
 
-fn __text(value) {
+fn __text(value: any) {
   if value == nil {
     return ""
   }
   return trim(to_string(value))
 }
 
-fn __err(code, message) {
+fn __err(code: any, message: any) {
   return Err({code: code, message: message, provider: BOX_PROVIDER_ID})
 }
 
-fn __reject(status, code, message) {
+fn __reject(status: any, code: any, message: any) {
   return {type: "reject", reject: {status: status, code: code, message: message}}
 }
